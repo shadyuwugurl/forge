@@ -1,0 +1,29 @@
+{
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/dist"
+  },
+  "bundle": {
+    "active": true,
+    "icon": ["icons/icon.png"],
+    "identifier": "com.forge.forge-gui",
+    "targets": "all"
+  },
+  "productName": "Forge",
+  "version": "0.1.0",
+  "identifier": "com.forge.forge-gui",
+  "app": {
+    "windows": [
+      {
+        "title": "Forge — Model Merging Studio",
+        "width": 1280,
+        "height": 800
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

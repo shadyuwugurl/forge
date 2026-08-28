@@ -12,6 +12,7 @@ members = [
     "crates/forge-metal",
     "crates/forge-cli",
     "crates/forge-tui",
+    "crates/forge-gui",
 ]
 
 [workspace.package]

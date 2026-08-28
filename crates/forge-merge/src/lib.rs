@@ -7,6 +7,7 @@ pub mod passthrough;
 pub mod frankenmerge;
 pub mod arch_mapper;
 pub mod orchestrator;
+pub mod batch;
 
 pub use linear::LinearMerge;
 pub use slerp::SlerpMerge;
@@ -17,3 +18,4 @@ pub use passthrough::PassthroughMerge;
 pub use frankenmerge::FrankenMerge;
 pub use arch_mapper::ArchitectureMapper;
 pub use orchestrator::{execute_merge, MergeOptions};
+pub use batch::{BulkMerger, BatchJob};

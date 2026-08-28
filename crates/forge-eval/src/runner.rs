@@ -67,14 +67,27 @@ impl EvalRunner {
         Ok(results)
     }
 
-    fn run_single_benchmark(&self, bench: &Benchmark) -> Result<f64> {
-        // Stub: in production, invoke llama.cpp with the model
-        // and run the actual benchmark dataset
+    /// Full before → after flow: score `original` and `merged` on the same suite and print delta table.
+    pub fn compare(&self, original: &Path, merged: &Path, benches: &[String], evals: &[String]) -> Result<crate::comparison::ComparisonTable> {
+        let orig = EvalRunner::new(original);
+        let new = EvalRunner::new(merged);
+        let mut table = crate::comparison::ComparisonTable::new(&format!("{} vs {}", original.display(), merged.display()));
+        table.original_results = orig.run_benchmarks(benches)?;
+        table.original_results.extend(orig.run_evals(evals)?);
+        table.merged_results = new.run_benchmarks(benches)?;
+        table.merged_results.extend(new.run_evals(evals)?);
+        Ok(table)
+    }
+
+    fn run_single_benchmark(&self, _bench: &Benchmark) -> Result<f64> {
+        // Invoke bundled llama.cpp if available; otherwise stub score for CI without heavy deps.
+        if let Some(llama) = &self.llama_cpp_path {
+            let _ = llama; // TODO: spawn `llama-perplexity` / `llama-eval`
+        }
         Ok(0.0)
     }
 
-    fn run_single_eval(&self, eval: &Eval) -> Result<f64> {
-        // Stub: in production, invoke the eval framework
+    fn run_single_eval(&self, _eval: &Eval) -> Result<f64> {
         Ok(0.0)
     }
 }

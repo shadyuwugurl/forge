@@ -3,31 +3,18 @@ use anyhow::Result;
 use forge_eval::{EvalRunner, ComparisonTable};
 
 pub fn run(model: &str, benchmarks: Option<&str>, evals: Option<&str>, original: Option<&Path>) -> Result<()> {
-    let runner = EvalRunner::new(std::path::Path::new(model));
+    let bench_names: Vec<String> = benchmarks.map(|b| b.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_else(|| vec!["hella".into(),"mmlu".into(),"arc".into(),"gsm8k".into(),"gpqa".into()]);
+    let eval_names: Vec<String> = evals.map(|e| e.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_else(|| vec!["ace".into(),"swe".into(),"terminal".into(),"gaia".into(),"hle".into()]);
 
-    let bench_names: Vec<String> = benchmarks
-        .map(|b| b.split(',').map(String::from).collect())
-        .unwrap_or_default();
-
-    let eval_names: Vec<String> = evals
-        .map(|e| e.split(',').map(String::from).collect())
-        .unwrap_or_default();
-
-    eprintln!("Evaluating model: {}", model);
-
-    let mut results = runner.run_benchmarks(&bench_names)?;
-    results.extend(runner.run_evals(&eval_names)?);
-
-    // If original model provided, compare
-    if let Some(orig_path) = original {
-        let orig_runner = EvalRunner::new(orig_path);
-        let orig_results = orig_runner.run_benchmarks(&bench_names)?;
-        // TODO: Merge orig_results with eval results into comparison table
+    if let Some(orig) = original {
+        let runner = EvalRunner::new(std::path::Path::new(model));
+        let table = runner.compare(orig, std::path::Path::new(model), &bench_names, &eval_names)?;
+        table.print();
+    } else {
+        let runner = EvalRunner::new(std::path::Path::new(model));
+        let mut results = runner.run_benchmarks(&bench_names)?;
+        results.extend(runner.run_evals(&eval_names)?);
+        for r in &results { eprintln!("  {}: {:.2}%", r.name, r.score * 100.0); }
     }
-
-    for r in &results {
-        eprintln!("  {}: {:.2}%", r.name, r.score * 100.0);
-    }
-
     Ok(())
 }

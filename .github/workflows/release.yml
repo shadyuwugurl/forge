@@ -1,0 +1,37 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-13
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: ${{ matrix.target }} }
+      - run: cargo build --release --target ${{ matrix.target }} -p forge-cli -p forge-tui
+      - run: tar czf forge-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release forge forge-tui
+      - uses: softprops/action-gh-release@v2
+        with: { files: forge-*.tar.gz, generate_release_notes: true }
+
+  brew-bump:
+    needs: build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          URL="https://github.com/shadyuwugurl/forge/archive/refs/tags/v${VERSION}.tar.gz"
+          SHA=$(curl -sL $URL | shasum -a 256 | cut -d' ' -f1)
+          sed -i '' "s|REPLACE_WITH_TARBALL_SHA256|$SHA|" homebrew/forge.rb
+          cat homebrew/forge.rb
