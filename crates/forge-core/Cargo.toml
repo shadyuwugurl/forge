@@ -13,3 +13,7 @@ toml = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 half = { workspace = true }
+
+[dev-dependencies]
+forge-io = { workspace = true }
+forge-darwin = { workspace = true }

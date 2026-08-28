@@ -19,8 +19,9 @@ Unified model merging, quantization, and evaluation tool for Apple Silicon. Buil
 ## Install
 
 ```bash
-brew tap forge-ml/forge
+brew tap shadyuwugurl/forge
 brew install forge
+# or: brew install shadyuwugurl/forge/forge
 ```
 
 Or build from source:
