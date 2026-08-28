@@ -14,3 +14,9 @@ log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 indicatif = { workspace = true }
+dirs = "5"
+which = "6"
+
+# Optional real llama.cpp binding — enable with `--features llama`
+# We keep it optional so `cargo check` on CI without cmake/metal works.
+llama-cpp-2 = { version = "0.1", optional = true }
