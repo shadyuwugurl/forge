@@ -54,6 +54,10 @@ tokio = { version = "1", features = ["full"] }
 # HuggingFace
 hf-hub = "0.4"
 
+# Testing
+tempfile = "3"
+uuid = { version = "1", features = ["v4", "serde"] }
+
 # Internal crates
 forge-core = { path = "crates/forge-core" }
 forge-io = { path = "crates/forge-io" }
