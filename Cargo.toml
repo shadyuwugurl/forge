@@ -1,0 +1,72 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/forge-core",
+    "crates/forge-io",
+    "crates/forge-merge",
+    "crates/forge-darwin",
+    "crates/forge-quant",
+    "crates/forge-eval",
+    "crates/forge-train",
+    "crates/forge-hub",
+    "crates/forge-metal",
+    "crates/forge-cli",
+    "crates/forge-tui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["forge contributors"]
+description = "Unified model merging, quantization, and evaluation tool for Apple Silicon"
+
+[workspace.dependencies]
+# I/O
+safetensors = "0.4"
+memmap2 = "0.9"
+
+# Compute
+rayon = "1.10"
+half = { version = "2", features = ["serde", "std"] }
+nalgebra = "0.33"
+
+# Config
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+
+# Logging
+anyhow = "1"
+thiserror = "2"
+log = "0.4"
+env_logger = "0.11"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# HuggingFace
+hf-hub = "0.4"
+
+# Internal crates
+forge-core = { path = "crates/forge-core" }
+forge-io = { path = "crates/forge-io" }
+forge-merge = { path = "crates/forge-merge" }
+forge-darwin = { path = "crates/forge-darwin" }
+forge-quant = { path = "crates/forge-quant" }
+forge-eval = { path = "crates/forge-eval" }
+forge-train = { path = "crates/forge-train" }
+forge-hub = { path = "crates/forge-hub" }
+forge-metal = { path = "crates/forge-metal" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,0 +1,22 @@
+[package]
+name = "forge-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal UI for forge"
+
+[[bin]]
+name = "forge-tui"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+forge-merge = { workspace = true }
+forge-quant = { workspace = true }
+forge-eval = { workspace = true }
+ratatui = "0.28"
+crossterm = "0.28"
+anyhow = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }

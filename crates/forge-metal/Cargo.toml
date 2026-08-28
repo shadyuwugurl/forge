@@ -1,0 +1,12 @@
+[package]
+name = "forge-metal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Metal GPU kernels, ANE dispatch, Apple Silicon acceleration"
+
+[dependencies]
+forge-core = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

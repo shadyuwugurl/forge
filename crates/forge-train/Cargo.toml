@@ -1,0 +1,17 @@
+[package]
+name = "forge-train"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LoRA/adapter extraction, data ripping, fusing pipeline"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+forge-merge = { workspace = true }
+half = { workspace = true }
+rayon = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }

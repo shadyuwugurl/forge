@@ -1,0 +1,17 @@
+[package]
+name = "forge-quant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Quantization engine: JangQ, Apex, Dynamic3, mixed-precision"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+half = { workspace = true }
+rayon = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

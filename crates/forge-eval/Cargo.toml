@@ -1,0 +1,16 @@
+[package]
+name = "forge-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Benchmark and evaluation runners with before/after comparison"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indicatif = { workspace = true }

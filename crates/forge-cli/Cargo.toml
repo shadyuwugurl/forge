@@ -1,0 +1,30 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI binary for forge"
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+forge-merge = { workspace = true }
+forge-darwin = { workspace = true }
+forge-quant = { workspace = true }
+forge-eval = { workspace = true }
+forge-train = { workspace = true }
+forge-hub = { workspace = true }
+forge-metal = { workspace = true }
+clap = { workspace = true }
+indicatif = { workspace = true }
+anyhow = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tokio = { workspace = true }

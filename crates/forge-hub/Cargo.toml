@@ -1,0 +1,19 @@
+[package]
+name = "forge-hub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HuggingFace Hub search, download, and model discovery"
+
+[dependencies]
+forge-core = { workspace = true }
+hf-hub = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indicatif = { workspace = true }
+urlencoding = "2"
+reqwest = { version = "0.12", features = ["json"] }

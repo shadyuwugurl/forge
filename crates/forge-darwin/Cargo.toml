@@ -1,0 +1,20 @@
+[package]
+name = "forge-darwin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Darwin V6 evolutionary model merging engine"
+
+[dependencies]
+forge-core = { workspace = true }
+forge-io = { workspace = true }
+forge-merge = { workspace = true }
+rayon = { workspace = true }
+half = { workspace = true }
+nalgebra = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+rand = "0.8"
+indicatif = { workspace = true }

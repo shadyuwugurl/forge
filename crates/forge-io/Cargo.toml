@@ -1,0 +1,17 @@
+[package]
+name = "forge-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Memory-mapped tensor I/O, streaming writer, format support"
+
+[dependencies]
+forge-core = { workspace = true }
+safetensors = { workspace = true }
+memmap2 = { workspace = true }
+half = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
