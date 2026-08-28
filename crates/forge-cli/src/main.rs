@@ -18,6 +18,44 @@ struct Cli {
     verbose: bool,
 }
 
+/// IMatrix calibration subcommands
+#[derive(Subcommand)]
+enum ImatrixCommand {
+    /// Build IMatrix from calibration data
+    Build {
+        /// Model path
+        model: String,
+        /// Calibration data (JSONL)
+        #[arg(short, long)]
+        calib: PathBuf,
+        /// Output directory
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Group size for IMatrix
+        #[arg(long, default_value = "64")]
+        group_size: usize,
+    },
+    /// Apply IMatrix to quantization
+    Apply {
+        /// Model path
+        model: String,
+        /// IMatrix file
+        imatrix: PathBuf,
+        /// Output directory
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Quantization method
+        #[arg(short, long)]
+        method: String,
+        /// Profile/tier
+        #[arg(short, long)]
+        profile: Option<String>,
+        /// Density (for dynamic3)
+        #[arg(long)]
+        density: Option<f32>,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Show model information (tensors, params, dtype, arch)
@@ -138,7 +176,7 @@ enum Commands {
         teacher: Option<String>,
     },
 
-    /// Train a model with LoRA/QLoRA/DoRA/GRPO
+/// Train a model with LoRA/QLoRA/DoRA/GRPO
     Train {
         /// Base model path
         model: String,
@@ -165,6 +203,12 @@ enum Commands {
         /// Batch size
         #[arg(long, default_value = "4")]
         batch_size: usize,
+    },
+
+    /// IMatrix calibration for quantization
+    Imatrix {
+        #[command(subcommand)]
+        command: ImatrixCommand,
     },
 
     /// Launch terminal UI
@@ -210,6 +254,16 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Train { model, dataset, output, method, rank, alpha, lr, epochs, batch_size } => {
             commands::train::run(&model, &dataset, &output, &method, rank, alpha, lr, epochs, batch_size)
+        }
+        Commands::Imatrix { command } => {
+            match command {
+                ImatrixCommand::Build { model, calib, output, group_size } => {
+                    commands::imatrix::run(std::path::Path::new(&model), std::path::Path::new(&calib), std::path::Path::new(&output), group_size)
+                }
+                ImatrixCommand::Apply { model, imatrix, output, method, profile, density } => {
+                    commands::imatrix::apply_run(std::path::Path::new(&model), std::path::Path::new(&imatrix), std::path::Path::new(&output), &method, profile.as_deref(), density)
+                }
+            }
         }
         Commands::Tui => {
             eprintln!("TUI not yet implemented — use `forge-tui` binary");
