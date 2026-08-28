@@ -215,7 +215,7 @@ fn emit_hf_config(store: &TensorStore, out: &Path, bit_widths: &[u8], needs_bf16
 
 /// Asymmetric per-group quant: for each group of `group_size` elements, compute scale/bias, quantize to `bits`.
 /// Returns (packed_u32, scales_f16_le_bytes_as_u16, biases_f16_le_bytes_as_u16) — caller packs to bytes.
-fn quantize_tensor(data: &[f32], bits: u8, group_size: usize, _needs_bf16: bool) -> Result<(Vec<u32>, Vec<u16>, Vec<u16>)> {
+pub fn quantize_tensor(data: &[f32], bits: u8, group_size: usize, _needs_bf16: bool) -> Result<(Vec<u32>, Vec<u16>, Vec<u16>)> {
     let levels = (1u32 << bits) as f32;
     let n_groups = (data.len() + group_size - 1) / group_size;
     let mut packed: Vec<u32> = Vec::new();

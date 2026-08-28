@@ -1,35 +1,49 @@
 use std::path::Path;
 use anyhow::Result;
 use forge_io::TensorStore;
-use forge_quant::{JangQuantizer, Dynamic3Quantizer, ApexQuantizer};
+use forge_quant::{JangQuantizer, Dynamic3Quantizer, ApexQuantizer, MixedPrecisionQuantizer, KvCacheOrganizer};
+use forge_quant::mixed::MixedStrategy;
 
 pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, density: Option<f32>) -> Result<()> {
+    // KV cache special case: `forge quant --method kv-cache --profile "32,32,128"` or just `forge info --kv-cache`
+    if method == "kv-cache" || method == "kv" {
+        let seq_len: usize = profile.and_then(|p| p.parse().ok()).unwrap_or(8192);
+        let org = KvCacheOrganizer::new(32, 32, 128);
+        let info = org.describe(seq_len);
+        eprintln!("KV cache {} tokens: {} GB, {:?}", seq_len, info["memory_gb"], info["quant"]);
+        std::fs::create_dir_all(output)?;
+        std::fs::write(output.join("kv_cache.json"), serde_json::to_string_pretty(&info)?)?;
+        return Ok(());
+    }
+
     let store = TensorStore::open(std::path::Path::new(model))?;
     std::fs::create_dir_all(output)?;
-
     eprintln!("Quantizing {} with method '{}'", model, method);
-
     match method {
         "jang" => {
             let profile_name = profile.unwrap_or("JANG_2L");
-            let quantizer = JangQuantizer::new(profile_name, forge_quant::jang::JangFormat::Mlx);
-            quantizer.quantize(&store, output)?;
+            let q = JangQuantizer::new(profile_name, forge_quant::jang::JangFormat::Mlx);
+            q.quantize(&store, output)?;
         }
-        "dynamic3" => {
+        "dynamic3"|"dynamic" => {
             let d = density.unwrap_or(0.5);
-            let quantizer = Dynamic3Quantizer::new(d, true);
-            quantizer.quantize(&store, output)?;
+            let q = Dynamic3Quantizer::new(d, true);
+            q.quantize(&store, output)?;
         }
         "apex" => {
             let tier = profile.unwrap_or("balanced");
-            let quantizer = ApexQuantizer::new(tier);
-            quantizer.quantize(&store, output)?;
+            ApexQuantizer::new(tier).quantize(&store, output)?;
         }
-        _ => {
-            return Err(anyhow::anyhow!("Unknown quant method: {}", method));
+        "btl4" => {
+            MixedPrecisionQuantizer::new(MixedStrategy::Btl4Compact, density.unwrap_or(4.0)).quantize(&store, output, &[])?;
         }
+        "mixed" => {
+            // profile can be "apex" to use apex-style tiering, else generic
+            let strat = if profile == Some("apex") { MixedStrategy::ApexStyle } else { MixedStrategy::Generic };
+            MixedPrecisionQuantizer::new(strat, density.unwrap_or(4.0)).quantize(&store, output, &[])?;
+        }
+        _ => return Err(anyhow::anyhow!("Unknown quant method: {} (try jang, dynamic3, apex, btl4, mixed, kv-cache)", method)),
     }
-
     eprintln!("Quantized model written to {}", output.display());
     Ok(())
 }

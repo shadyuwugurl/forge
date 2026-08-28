@@ -70,6 +70,7 @@ enum Commands {
     },
 
     /// Quantize a model
+    #[command(visible_alias = "quant")]
     Quantize {
         /// Model path
         model: String,

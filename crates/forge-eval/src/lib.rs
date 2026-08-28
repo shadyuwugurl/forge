@@ -4,6 +4,7 @@ pub mod runner;
 pub mod comparison;
 pub mod datasets;
 pub mod llama;
+pub mod agentic;
 
 pub use runner::EvalRunner;
 pub use comparison::ComparisonTable;
