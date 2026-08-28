@@ -2,8 +2,8 @@ use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use forge_io::TensorStore;
 use forge_io::StreamingWriter;
-
 use forge_core::{DType, TensorMeta};
+use forge_metal::{MetalMerge, HardwareInfo};
 
 /// Trait for merge operations
 pub trait MergeOp {
@@ -42,6 +42,9 @@ pub fn execute_merge(
     } else {
         None
     };
+
+    // Try to init Metal backend for GPU-accelerated merges
+    let metal = MetalMerge::new().ok();
 
     let mut writer = StreamingWriter::new(output_dir, 5 * 1024 * 1024 * 1024)?; // 5GB shards
 

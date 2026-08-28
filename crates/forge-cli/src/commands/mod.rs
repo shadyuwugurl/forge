@@ -6,3 +6,4 @@ pub mod quantize;
 pub mod eval;
 pub mod fuse;
 pub mod extract;
+pub mod train;

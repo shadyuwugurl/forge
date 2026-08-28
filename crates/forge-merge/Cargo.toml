@@ -8,6 +8,7 @@ description = "Model merging strategies with cross-architecture support"
 [dependencies]
 forge-core = { workspace = true }
 forge-io = { workspace = true }
+forge-metal = { workspace = true }
 rayon = { workspace = true }
 half = { workspace = true }
 nalgebra = { workspace = true }

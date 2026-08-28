@@ -129,6 +129,35 @@ enum Commands {
         rank: usize,
     },
 
+    /// Train a model with LoRA/QLoRA/DoRA/GRPO
+    Train {
+        /// Base model path
+        model: String,
+        /// Training dataset (JSONL)
+        dataset: String,
+        /// Output directory
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Training method (lora, qlora, dora, grpo, dapo)
+        #[arg(short, long, default_value = "lora")]
+        method: String,
+        /// LoRA rank
+        #[arg(long, default_value = "16")]
+        rank: usize,
+        /// LoRA alpha
+        #[arg(long, default_value = "32.0")]
+        alpha: f32,
+        /// Learning rate
+        #[arg(long, default_value = "2e-4")]
+        lr: f32,
+        /// Number of epochs
+        #[arg(long, default_value = "3")]
+        epochs: usize,
+        /// Batch size
+        #[arg(long, default_value = "4")]
+        batch_size: usize,
+    },
+
     /// Launch terminal UI
     Tui,
 
@@ -169,6 +198,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Extract { model, base, output, rank } => {
             commands::extract::run(&model, &base, &output, rank)
+        }
+        Commands::Train { model, dataset, output, method, rank, alpha, lr, epochs, batch_size } => {
+            commands::train::run(&model, &dataset, &output, &method, rank, alpha, lr, epochs, batch_size)
         }
         Commands::Tui => {
             eprintln!("TUI not yet implemented — use `forge-tui` binary");
