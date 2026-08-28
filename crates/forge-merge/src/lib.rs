@@ -8,6 +8,7 @@ pub mod frankenmerge;
 pub mod arch_mapper;
 pub mod orchestrator;
 pub mod batch;
+pub mod distributed;
 
 pub use linear::LinearMerge;
 pub use slerp::SlerpMerge;

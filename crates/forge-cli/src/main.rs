@@ -115,18 +115,27 @@ enum Commands {
         output: PathBuf,
     },
 
-    /// Extract adapter from a fine-tuned model
+    /// Extract adapter / training data from a fine-tuned model
     Extract {
         /// Fine-tuned model path
         model: PathBuf,
         /// Base model path
         base: PathBuf,
-        /// Output path for adapter
+        /// Output path for extracted data
         #[arg(short, long)]
         output: PathBuf,
-        /// LoRA rank
+        /// Extraction method (lora, weight-diff, activation-probe, distill)
+        #[arg(short, long, default_value = "lora")]
+        method: String,
+        /// LoRA rank (for lora method)
         #[arg(long, default_value = "16")]
         rank: usize,
+        /// Calibration data file (JSONL) for activation-probe/distill
+        #[arg(long)]
+        calib: Option<String>,
+        /// Teacher model path (for distill method)
+        #[arg(long)]
+        teacher: Option<String>,
     },
 
     /// Train a model with LoRA/QLoRA/DoRA/GRPO
@@ -196,8 +205,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Fuse { base, adapters, output } => {
             commands::fuse::run(&base, &adapters, &output)
         }
-        Commands::Extract { model, base, output, rank } => {
-            commands::extract::run(&model, &base, &output, rank)
+        Commands::Extract { model, base, output, method, rank, calib, teacher } => {
+            commands::extract::run(&model, &base, &output, rank, Some(method), calib, teacher)
         }
         Commands::Train { model, dataset, output, method, rank, alpha, lr, epochs, batch_size } => {
             commands::train::run(&model, &dataset, &output, &method, rank, alpha, lr, epochs, batch_size)

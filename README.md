@@ -30,38 +30,104 @@ Or build from source:
 cargo build --release
 ```
 
-## Quick Start
+## Quick Start (Modern Models)
+
+### Latest Model Families (2024-2025)
+- **Qwen 2.5 / Qwen 3** — Strong coding/reasoning, MoE variants (Qwen 2.5-32B, Qwen 3-235B-A22B)
+- **Nemotron 3 Ultra / Nemotron 4** — NVIDIA's reasoning models, strong on GPQA
+- **Llama 3.1 / 3.2** — Meta's latest, 8B/70B/405B, tool calling native
+- **Nemotron 3 Ultra** — 120B reasoning, strong on MMLU/GPQA
+- **Gemma 2 / 3** — Google's lightweight, great on-device
 
 ```bash
-# Model info
-forge info ./model
-forge info meta-llama/Llama-3.1-8B-Instruct
+# Model info (auto-detects architecture)
+forge info qwen/Qwen2.5-32B-Instruct
+forge info nvidia/Nemotron-3-Ultra
+forge info meta-llama/Llama-3.2-70B-Instruct
 
-# Search & download
-forge search "qwen 27b coding"
-forge download meta-llama/Llama-3.1-70B-Instruct --output ./models
+# Search & download modern models
+forge search "qwen 2.5 coding"
+forge search "nemotron reasoning"
+forge search "llama 3.2 tool use"
 
-# Merge
-forge merge --config config.yaml --output ./merged
-forge merge --models modelA modelB --method slerp --t 0.5 --output ./merged
-forge merge --models modelA modelB --method darwin --generations 30 --population 40 --output ./merged
+forge download qwen/Qwen2.5-32B-Instruct --output ./models
+forge download nvidia/Nemotron-3-Ultra --output ./models
 
-# Quantize
-forge quant ./model --method jang --profile JANG_2L --output ./quantized
-forge quant ./model --method dynamic3 --density 0.5 --output ./quantized
-forge quant ./model --method apex --profile balanced --output ./quantized
+# Cross-architecture merge (e.g., Qwen 2.5 2.6B + Qwen 3.8 27B → 3B fused)
+forge merge --models ./Qwen2.5-2.6B ./Qwen3.8-27B --method frankenmerge --output ./fused
 
-# Evaluate
+# Modern quant for Apple Silicon
+forge quant ./model --method jang --profile JANG_2L --output ./quantized    # MLX-native mixed-prec
+forge quant ./model --method dynamic3 --density 0.5 --output ./quantized   # Unsloth Dynamic 3.0
+forge quant ./model --method apex --profile i_quality --output ./quantized  # Apex MoE-aware
+forge quant ./model --method btl4 --output ./quantized                      # BTL4 compact
+
+# Evaluate with modern benchmarks
 forge eval ./model --benchmarks hella,mmlu,arc,gsm8k,gpqa
-forge eval ./model --benchmarks mmlu,gsm8k --evals ace,swe --original ./base
+forge eval ./model --evals ace,swe,terminal,gaia,hle
+forge eval --original ./base --model ./merged --benchmarks gpqa --evals hle  # before/after delta
 
-# Fuse adapters
+# LoRA/QLoRA/DoRA/GRPO training
+forge train --model qwen/Qwen2.5-7B --dataset ./data.jsonl --output ./lora --method lora --rank 32 --alpha 64 --lr 2e-4 --epochs 3
+forge train --model qwen/Qwen2.5-7B --dataset ./reasoning.jsonl --output ./grpo --method grpo --epochs 5
+
+# Extract LoRA from fine-tuned model
+forge extract --model ./finetuned --base ./base --output ./adapter --rank 16
+
+# Fuse + quant + eval pipeline
 forge fuse --base ./base --adapters ./lora_dir --output ./fused
-forge extract --model ./finetuned --base ./base --output ./adapter.safetensors --rank 16
+forge quant ./fused --method dynamic3 --density 0.4 --output ./quantized
+forge eval ./quantized --benchmarks gpqa --evals hle --original ./base
+```
 
-# TUI / GUI
-forge tui
-forge gui
+## Model-Specific Quick Recipes
+
+### Qwen 2.5/3 Merge (Cross-Architecture)
+```bash
+# FrankenMerge: layer-stack Qwen 2.5 2.6B + Qwen 3.8 27B → grab 3B params from big
+forge merge --models ./Qwen2.5-2.6B ./Qwen3.8-27B --method frankenmerge --output ./qwen-fused
+
+# Darwin V6 evolutionary (best for reasoning)
+forge merge --models ./Qwen2.5-7B ./Nemotron-3-8B --method darwin --generations 50 --population 60 --output ./qwen-nemotron
+```
+
+### Nemotron 3 Ultra Quantization (Apple Silicon)
+```bash
+# Apex i_quality: 21.3GB, beats Q8_0 at half size
+forge quant ./Nemotron-3-Ultra --method apex --profile i_quality --output ./nemotron-iq
+
+# Dynamic 3.0: model-specific, Apple Silicon formats (Q4_NL, Q5.1, Q5.0, Q4.1, Q4.0)
+forge quant ./Nemotron-3-Ultra --method dynamic3 --density 0.5 --output ./nemotron-dyn
+```
+
+### Llama 3.1/3.2 + Tool Use
+```bash
+# Merge Llama 3.1 70B with Nemotron for reasoning + tools
+forge merge --models ./Llama-3.1-70B-Instruct ./Nemotron-3-8B --method darwin --generations 30 --output ./llama-nemotron
+
+# Quantize with tool-use preservation (Apex preserves attention)
+forge quant ./llama-nemotron --method apex --profile balanced --output ./llama-nemotron-quant
+```
+
+### Data Ripping / Training Data Extraction
+```bash
+# Level 1: Weight diff (base vs finetuned)
+forge extract --model ./finetuned --base ./base --output ./adapter --rank 16
+
+# Level 2: Activation probing (needs calibration set)
+forge extract --model ./finetuned --base ./base --output ./data --method probe --calib ./calib.jsonl
+
+# Level 3: Knowledge distillation reconstruction
+forge extract --model ./finetuned --base ./base --output ./reconstructed --method distill --teacher ./teacher
+
+# Full pipeline: extract → merge adapters → fuse → quant → eval
+forge fuse --base ./base --adapters ./adapters --output ./fused
+```
+
+### Distributed Merge (Multi-Mac Thunderbolt)
+```bash
+# On each Mac: forge cluster status
+# On coordinator: forge merge --models A B C --method darwin --distributed --output ./distributed-merged
 ```
 
 ## Benchmarks & Evals
