@@ -12,9 +12,8 @@ pub fn run(model: &Path, base: &Path, output: &Path, rank: usize) -> Result<()> 
 
     eprintln!("  LoRA A layers: {}", adapter.lora_a.len());
     eprintln!("  LoRA B layers: {}", adapter.lora_b.len());
-
-    // TODO: Save adapter to output path
-
+    adapter.save_peft(output)?;
+    eprintln!("  Saved PEFT to {}/adapter_config.json", output.display());
     eprintln!("Adapter extracted to {}", output.display());
     Ok(())
 }

@@ -11,7 +11,9 @@ forge-io = { workspace = true }
 forge-merge = { workspace = true }
 half = { workspace = true }
 rayon = { workspace = true }
+nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
