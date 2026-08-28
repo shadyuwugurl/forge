@@ -9,5 +9,5 @@ pub use jang::JangQuantizer;
 pub use dynamic3::Dynamic3Quantizer;
 pub use apex::ApexQuantizer;
 pub use mixed::MixedPrecisionQuantizer;
-pub use gguf::GgufWriter;
+pub use gguf::{GgufWriter, GGUFQuantType};
 pub use kv_cache::{KvCacheOrganizer, KvCacheConfig, KvQuant};

@@ -1,7 +1,7 @@
 use std::path::Path;
 use anyhow::Result;
 use forge_io::TensorStore;
-use forge_quant::{JangQuantizer, Dynamic3Quantizer, ApexQuantizer, MixedPrecisionQuantizer, KvCacheOrganizer};
+use forge_quant::{JangQuantizer, Dynamic3Quantizer, ApexQuantizer, MixedPrecisionQuantizer, KvCacheOrganizer, GgufWriter, GGUFQuantType};
 use forge_quant::mixed::MixedStrategy;
 
 pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, density: Option<f32>) -> Result<()> {
@@ -42,7 +42,14 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
             let strat = if profile == Some("apex") { MixedStrategy::ApexStyle } else { MixedStrategy::Generic };
             MixedPrecisionQuantizer::new(strat, density.unwrap_or(4.0)).quantize(&store, output, &[])?;
         }
-        _ => return Err(anyhow::anyhow!("Unknown quant method: {} (try jang, dynamic3, apex, btl4, mixed, kv-cache)", method)),
+        "gguf" => {
+            let qtype = profile.and_then(|p| GGUFQuantType::from_str(p)).unwrap_or(GGUFQuantType::Q4_K_M);
+            let mut writer = GgufWriter::create(output)?;
+            writer.set_metadata("general.architecture", serde_json::Value::String("generic".into()));
+            writer.set_metadata("general.name", serde_json::Value::String("forge-quantized".into()));
+            writer.write_quantized(&store, qtype)?;
+        }
+        _ => return Err(anyhow::anyhow!("Unknown quant method: {} (try jang, dynamic3, apex, btl4, mixed, gguf, kv-cache)", method)),
     }
     eprintln!("Quantized model written to {}", output.display());
     Ok(())
