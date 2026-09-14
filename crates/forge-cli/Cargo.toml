@@ -19,6 +19,7 @@ forge-eval = { workspace = true }
 forge-train = { workspace = true }
 forge-hub = { workspace = true }
 forge-metal = { workspace = true }
+forge-surgery = { workspace = true }
 clap = { workspace = true }
 indicatif = { workspace = true }
 anyhow = { workspace = true }

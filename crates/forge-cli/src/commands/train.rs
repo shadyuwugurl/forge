@@ -12,6 +12,7 @@ pub fn run(
     lr: f32,
     epochs: usize,
     batch_size: usize,
+    boundary: Option<f32>,
 ) -> Result<()> {
     let method = match method {
         "lora" => TrainMethod::LoRA,
@@ -19,6 +20,9 @@ pub fn run(
         "dora" => TrainMethod::DoRA,
         "grpo" => TrainMethod::GRPO,
         "dapo" => TrainMethod::DAPO,
+        "diffusionblocks" => TrainMethod::DiffusionBlocks,
+        "lopt" => TrainMethod::Lopt,
+        "lls" => TrainMethod::Lls,
         _ => return Err(anyhow::anyhow!("Unknown method: {}", method)),
     };
 
@@ -33,6 +37,7 @@ pub fn run(
         batch_size,
         method,
         quant: None,
+        boundary: boundary.unwrap_or(0.5),
     };
 
     let mut trainer = Trainer::new(config)?;

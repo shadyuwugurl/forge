@@ -1,0 +1,11 @@
+[package]
+name = "forge-surgery"
+version = "0.5.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Structural model surgery for Forge: cross-attention encoder fusion, sparsify, densify"
+
+[dependencies]
+forge-core = { path = "../forge-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }

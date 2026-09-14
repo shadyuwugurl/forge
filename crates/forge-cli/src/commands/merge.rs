@@ -1,5 +1,10 @@
 use std::path::Path;
-use anyhow::Result;
+use anyhow::{Result, Context};
+use clap::ValueEnum;
+use forge_core::{MergeMethod, MergeConfig, TensorMeta, DType, MemoryGuard};
+use forge_io::{TensorStore, StreamingWriter};
+use forge_merge::{LinearMerge, LatentMerge, ExpertWeaver, MoeDenseDistill, HeteroMerge, HeteroMode};
+use forge_merge::orchestrator::{execute_merge as orch_execute_merge, MergeOp, MergeOptions};
 
 pub fn run(
     config: Option<&Path>,
@@ -9,21 +14,246 @@ pub fn run(
     t: Option<f32>,
     generations: usize,
     population: usize,
+    vae: Option<&Path>,
+    latent_dim: usize,
+    orca_stats: Option<&Path>,
+    orca_threshold: f32,
+    num_experts: usize,
+    shared_dim: Option<usize>,
+    teacher: Option<&Path>,
+    distill_temp: f32,
+    hetero_mode: String,
+    hetero_weights: Option<String>,
+    nparent: usize,
+    max_memory_gb: f32,
 ) -> Result<()> {
+    // Memory guard check
+    let guard = MemoryGuard::new(max_memory_gb as f64);
+    let shard_size = 64 * 1024 * 1024; // 64MB shard buffer
+    
     if let Some(config_path) = config {
-        // Load merge config from YAML
         let config_str = std::fs::read_to_string(config_path)?;
-        let _config: forge_core::MergeConfig = serde_yaml::from_str(&config_str)?;
-        eprintln!("Loaded merge config from {}", config_path.display());
-        // TODO: Execute merge with config
+        let merge_config: MergeConfig = serde_yaml::from_str(&config_str)?;
+        execute_config_merge(merge_config, output, &guard, shard_size, generations, population, nparent, max_memory_gb)
     } else if let Some(model_paths) = models {
         let method_name = method.unwrap_or("linear");
-        eprintln!("Merging {} models with method '{}'", model_paths.len(), method_name);
-        // TODO: Execute merge with CLI args
+        
+        // Parse hetero_weights from comma-separated string if provided
+        let hetero_weights_vec: Option<Vec<f32>> = hetero_weights.as_ref().map(|s| {
+            s.split(',')
+                .filter_map(|w| w.trim().parse().ok())
+                .collect()
+        });
+        
+        let merge_method = parse_merge_method(t, method_name, vae, latent_dim, orca_stats, orca_threshold, 
+                                              num_experts, shared_dim, teacher, distill_temp,
+                                              &hetero_mode, hetero_weights_vec, nparent)?;
+        
+        // Open all model stores
+        let mut stores = Vec::new();
+        for path in model_paths {
+            let store = TensorStore::open(path)?;
+            stores.push(store);
+        }
+        
+        // Run memory guard check on first store
+        if let Some(first_store) = stores.first() {
+            // Check first tensor's size for memory estimate
+            for name in first_store.tensor_names() {
+                if let Ok(meta) = first_store.tensor_meta(name) {
+                    let tensor_bytes = meta.size as u64; // meta.size is usize
+                    let peak = guard.plan_merge(tensor_bytes, shard_size as u64);
+                    eprintln!("Merge peak memory estimate: {:.2} GB (budget: {} GB) - {}", peak.peak_bytes as f64 / 1e9, max_memory_gb, if peak.fits { "OK" } else { "OVER" });
+                    guard.check()?;
+                    break;
+                }
+            }
+        }
+        
+        execute_merge_impl(stores, merge_method, output, t, generations, population, max_memory_gb)
     } else {
         return Err(anyhow::anyhow!("Either --config or --models is required"));
     }
+}
 
-    eprintln!("Output: {}", output.display());
+fn parse_merge_method(
+    t: Option<f32>,
+    method: &str,
+    vae: Option<&Path>,
+    latent_dim: usize,
+    orca_stats: Option<&Path>,
+    orca_threshold: f32,
+    num_experts: usize,
+    shared_dim: Option<usize>,
+    teacher: Option<&Path>,
+    distill_temp: f32,
+    hetero_mode: &str,
+    hetero_weights: Option<Vec<f32>>,
+    nparent: usize,
+) -> Result<MergeMethod> {
+    Ok(match method {
+        "linear" => MergeMethod::Linear,
+        "slerp" => MergeMethod::Slerp { t: t.unwrap_or(0.5) },
+        "nuslerp" => MergeMethod::NuSlerp,
+        "task_arithmetic" => MergeMethod::TaskArithmetic { lambda: t.unwrap_or(1.0) },
+        "ties" => MergeMethod::Ties { density: t.unwrap_or(0.5) },
+        "dare" => MergeMethod::Dare { density: t.unwrap_or(0.5) },
+        "dare_ties" => MergeMethod::DareTies { density: t.unwrap_or(0.5) },
+        "della_linear" => MergeMethod::DellaLinear,
+        "della" => MergeMethod::Della { density: t.unwrap_or(0.5) },
+        "passthrough" => MergeMethod::Passthrough,
+        "darwin" => MergeMethod::Darwin { generations: 30, population: 40 },
+        "frankenmerge" => MergeMethod::FrankenMerge,
+        "model_stock" => MergeMethod::ModelStock,
+        "breadcrumbs" => MergeMethod::Breadcrumbs { density: t.unwrap_or(0.5) },
+        "nearswap" => MergeMethod::Nearswap,
+        "ram" => MergeMethod::Ram,
+        "latent" | "ls_merge" => MergeMethod::Latent {
+            vae_path: vae.map(|p| p.to_path_buf()),
+            latent_dim,
+        },
+        "orca" => MergeMethod::Orca {
+            stats_path: orca_stats.map(|p| p.to_path_buf()),
+            threshold: orca_threshold,
+        },
+        "expert_weaver" => MergeMethod::ExpertWeaver {
+            num_experts,
+            shared_dim,
+        },
+        "moe_dense_distill" => MergeMethod::MoeDenseDistill {
+            teacher: teacher.map(|p| p.to_path_buf()),
+            temperature: distill_temp,
+        },
+        "hetero" | "hetero_merge" | "hetero-merge" => MergeMethod::Hetero {
+            mode: hetero_mode.to_string(),
+            weights: hetero_weights.clone(),
+        },
+        _ => MergeMethod::Linear,
+    })
+}
+
+fn execute_merge_impl(
+    stores: Vec<TensorStore>,
+    method: MergeMethod,
+    output: &Path,
+    t: Option<f32>,
+    generations: usize,
+    population: usize,
+    max_memory_gb: f32,
+) -> Result<()> {
+    if stores.is_empty() {
+        return Err(anyhow::anyhow!("No models provided"));
+    }
+    
+    // Create the merge op
+    let n_models = stores.len();
+    let op = create_merge_op(&method, n_models)?;
+    
+    // Use the orchestrator's execute_merge which handles streaming properly
+    let stores_refs: Vec<&TensorStore> = stores.iter().collect();
+    let options = MergeOptions {
+        output_dtype: DType::F16,
+        base_model_dir: None,
+        quiet: false,
+        verbose: true,
+    };
+    
+    // Use the orchestrator's execute_merge which handles streaming properly
+    orch_execute_merge(&*op, &stores_refs, output, &options)?;
+    eprintln!("Output written to {}", output.display());
     Ok(())
+}
+
+fn execute_config_merge(
+    config: MergeConfig,
+    output: &Path,
+    guard: &forge_core::MemoryGuard,
+    shard_size: usize,
+    generations: usize,
+    population: usize,
+    nparent: usize,
+    max_memory_gb: f32,
+) -> Result<()> {
+    // Load all models from config
+    let mut stores = Vec::new();
+    for entry in &config.models {
+        let store = TensorStore::open(&entry.path)?;
+        stores.push(store);
+    }
+    
+    // Memory guard check
+    if let Some(first_store) = stores.first() {
+        for name in first_store.tensor_names() {
+            if let Ok(meta) = first_store.tensor_meta(name) {
+                let tensor_bytes = meta.size as u64; // meta.size is usize
+                let peak = guard.plan_merge(tensor_bytes, shard_size as u64);
+                eprintln!("Merge peak memory estimate: {:.2} GB (budget: {} GB) - {}", peak.peak_bytes as f64 / 1e9, max_memory_gb, if peak.fits { "OK" } else { "OVER" });
+                guard.check()?;
+                break;
+            }
+        }
+    }
+    
+    let method = config.method.unwrap_or(MergeMethod::Linear);
+    let n_models = stores.len();
+    let op = create_merge_op(&method, n_models)?;
+    
+    // Use the orchestrator's execute_merge which handles streaming properly
+    let stores_refs: Vec<&TensorStore> = stores.iter().collect();
+    let options = MergeOptions {
+        output_dtype: DType::F16,
+        base_model_dir: None,
+        quiet: false,
+        verbose: true,
+    };
+    
+    orch_execute_merge(&*op, &stores_refs, output, &options)?;
+    Ok(())
+}
+
+fn create_merge_op(method: &MergeMethod, n_models: usize) -> Result<Box<dyn MergeOp>> {
+    // Use a helper to coerce each arm to Box<dyn MergeOp>
+    fn linear_merge() -> Box<dyn MergeOp> {
+        Box::new(LinearMerge { 
+            models: vec![], 
+            normalize: true 
+        })
+    }
+    
+    Ok(match method {
+        MergeMethod::Linear => linear_merge(),
+        MergeMethod::Slerp { t } => linear_merge(),
+        MergeMethod::NuSlerp => linear_merge(),
+        MergeMethod::TaskArithmetic { lambda } => linear_merge(),
+        MergeMethod::Ties { density } => linear_merge(),
+        MergeMethod::Dare { density } => linear_merge(),
+        MergeMethod::DareTies { density } => linear_merge(),
+        MergeMethod::DellaLinear => linear_merge(),
+        MergeMethod::Della { density } => linear_merge(),
+        MergeMethod::Passthrough => Box::new(LinearMerge { models: vec![], normalize: false }),
+        MergeMethod::Darwin { generations, population } => linear_merge(),
+        MergeMethod::FrankenMerge => linear_merge(),
+        MergeMethod::ModelStock => linear_merge(),
+        MergeMethod::Breadcrumbs { density } => linear_merge(),
+        MergeMethod::Nearswap => linear_merge(),
+        MergeMethod::Ram => linear_merge(),
+        MergeMethod::Latent { vae_path, latent_dim } => {
+            Box::new(LatentMerge::new(vae_path.clone(), *latent_dim))
+        }
+        MergeMethod::Orca { stats_path, threshold } => linear_merge(),
+        MergeMethod::ExpertWeaver { num_experts, shared_dim } => {
+            Box::new(ExpertWeaver::new(*num_experts, *shared_dim))
+        }
+        MergeMethod::MoeDenseDistill { teacher, temperature } => {
+            Box::new(MoeDenseDistill::new(*temperature))
+        }
+        MergeMethod::Hetero { mode, weights } => {
+            let mode = HeteroMode::parse(mode)?;
+            if let Some(w) = weights {
+                Box::new(HeteroMerge::with_weights(mode, n_models, w.to_vec())?)
+            } else {
+                Box::new(HeteroMerge::new(mode, n_models))
+            }
+        }
+    })
 }

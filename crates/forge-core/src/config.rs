@@ -56,6 +56,41 @@ pub enum MergeMethod {
     /// RAM merge
     #[serde(rename = "ram")]
     Ram,
+    /// ORCA outlier-aware allocation (AAAI-26)
+    #[serde(rename = "orca")]
+    Orca {
+        stats_path: Option<PathBuf>,
+        #[serde(default = "default_orca_threshold")]
+        threshold: f32,
+    },
+    /// LS-Merge latent-space merge (ICLR-26)
+    #[serde(rename = "latent")]
+    Latent {
+        vae_path: Option<PathBuf>,
+        #[serde(default = "default_latent_dim")]
+        latent_dim: usize,
+    },
+    /// ExpertWeaver GLU sparsification merge (ICML-26)
+    #[serde(rename = "expert_weaver")]
+    ExpertWeaver {
+        #[serde(default = "default_num_experts")]
+        num_experts: usize,
+    },
+    /// MoE-to-dense distillation merge
+    #[serde(rename = "moe_dense_distill")]
+    MoeDenseDistill {
+        teacher: Option<PathBuf>,
+        #[serde(default = "default_distill_temp")]
+        temperature: f32,
+    },
+    /// Heterogeneous cross-family merge (Union/Intersection)
+    #[serde(rename = "hetero")]
+    Hetero {
+        #[serde(default = "default_hetero_mode")]
+        mode: String,
+        #[serde(default)]
+        weights: Vec<f32>,
+    },
 }
 
 /// Quantization method selection
@@ -85,9 +120,41 @@ pub enum QuantMethod {
     /// Generic mixed precision
     #[serde(rename = "mixed")]
     MixedPrecision { per_layer_bits: Vec<(String, u8)> },
+    /// BSQAT block-scaled quantization (4-bit default)
+    #[serde(rename = "bsqat")]
+    Bsqat {
+        #[serde(default = "default_bsqat_bits")]
+        bits: u8,
+        #[serde(default = "default_bsqat_block")]
+        block: usize,
+    },
+    /// OneComp one-line progressive quantization
+    #[serde(rename = "onecomp")]
+    OneComp {
+        #[serde(default = "default_onecomp_hi")]
+        hi_bits: u8,
+        #[serde(default = "default_onecomp_lo")]
+        lo_bits: u8,
+    },
+    /// QuEPT elastic-precision quantization
+    #[serde(rename = "quept")]
+    QuEPT {
+        #[serde(default = "default_quept_width")]
+        width: u8,
+    },
 }
 
 fn default_true() -> bool { true }
+fn default_orca_threshold() -> f32 { 3.0 }
+fn default_latent_dim() -> usize { 512 }
+fn default_num_experts() -> usize { 8 }
+fn default_distill_temp() -> f32 { 1.0 }
+fn default_hetero_mode() -> String { "union".to_string() }
+fn default_bsqat_bits() -> u8 { 4 }
+fn default_bsqat_block() -> usize { 128 }
+fn default_onecomp_hi() -> u8 { 4 }
+fn default_onecomp_lo() -> u8 { 2 }
+fn default_quept_width() -> u8 { 4 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum JangOutputFormat {

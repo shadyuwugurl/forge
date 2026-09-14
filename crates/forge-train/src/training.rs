@@ -17,6 +17,7 @@ pub struct TrainConfig {
     pub batch_size: usize,
     pub method: TrainMethod,
     pub quant: Option<QuantConfig>,
+    pub boundary: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,9 @@ pub enum TrainMethod {
     DoRA,
     GRPO,
     DAPO,
+    DiffusionBlocks,
+    Lopt,
+    Lls,
 }
 
 impl fmt::Display for TrainMethod {
@@ -36,6 +40,9 @@ impl fmt::Display for TrainMethod {
             TrainMethod::DoRA => write!(f, "dora"),
             TrainMethod::GRPO => write!(f, "grpo"),
             TrainMethod::DAPO => write!(f, "dapo"),
+            TrainMethod::DiffusionBlocks => write!(f, "diffusionblocks"),
+            TrainMethod::Lopt => write!(f, "lopt"),
+            TrainMethod::Lls => write!(f, "lls"),
         }
     }
 }

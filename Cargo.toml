@@ -13,6 +13,7 @@ members = [
     "crates/forge-cli",
     "crates/forge-tui",
     "crates/forge-gui",
+    "crates/forge-surgery",
 ]
 
 [workspace.package]
@@ -68,6 +69,7 @@ forge-eval = { path = "crates/forge-eval" }
 forge-train = { path = "crates/forge-train" }
 forge-hub = { path = "crates/forge-hub" }
 forge-metal = { path = "crates/forge-metal" }
+forge-surgery = { path = "crates/forge-surgery" }
 
 [profile.release]
 opt-level = 3

@@ -134,6 +134,9 @@ impl EvalRunner {
                         display_name: eval.display_name.clone(),
                         difficulty: crate::benchmarks::Difficulty::Hard,
                         description: eval.description.clone(),
+                        category: crate::benchmarks::BenchmarkCategory::Reasoning,
+                        dataset_name: eval.name.clone(),
+                        metric: "accuracy".to_string(),
                     };
                     self.run_single_benchmark(&fake_bench).unwrap_or(0.0)
                 }
@@ -147,6 +150,9 @@ impl EvalRunner {
                 display_name: eval.display_name.clone(),
                 difficulty: crate::benchmarks::Difficulty::Hard,
                 description: eval.description.clone(),
+                category: crate::benchmarks::BenchmarkCategory::Reasoning,
+                dataset_name: eval.name.clone(),
+                metric: "accuracy".to_string(),
             });
         }
         Ok(correct as f64 / total as f64)

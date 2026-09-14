@@ -82,7 +82,7 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
-    /// Merge models using a config file or CLI args
+/// Merge models using a config file or CLI args
     Merge {
         /// Path to merge config YAML
         #[arg(short, long)]
@@ -90,7 +90,7 @@ enum Commands {
         /// Model paths to merge
         #[arg(short, long, num_args = 2..)]
         models: Option<Vec<PathBuf>>,
-        /// Merge method (linear, slerp, ties, dare, della, passthrough, darwin, frankenmerge)
+        /// Merge method (linear, slerp, ties, dare, della, passthrough, darwin, frankenmerge, latent, orca, expert_weaver, moe_dense_distill, hetero)
         #[arg(short, long)]
         method: Option<String>,
         /// Output directory
@@ -105,6 +105,39 @@ enum Commands {
         /// Darwin population size
         #[arg(long, default_value = "40")]
         population: usize,
+        /// Hetero merge mode (union, intersection)
+        #[arg(long, default_value = "union")]
+        hetero_mode: String,
+        /// Hetero merge weights (comma-separated)
+        #[arg(long)]
+        hetero_weights: Option<String>,
+        /// VAE checkpoint for latent merge
+        #[arg(long)]
+        vae: Option<PathBuf>,
+        /// Latent dimension for latent merge
+        #[arg(long, default_value = "512")]
+        latent_dim: usize,
+        /// ORCA stats.json path
+        #[arg(long)]
+        orca_stats: Option<PathBuf>,
+        /// ORCA threshold
+        #[arg(long, default_value = "3.0")]
+        orca_threshold: f32,
+        /// Number of experts for expert_weaver
+        #[arg(long, default_value = "8")]
+        num_experts: usize,
+        /// Teacher path for moe_dense_distill
+        #[arg(long)]
+        teacher: Option<PathBuf>,
+        /// Distill temperature for moe_dense_distill
+        #[arg(long, default_value = "1.0")]
+        distill_temp: f32,
+        /// N-parent merge (number of parents)
+        #[arg(long, default_value = "2")]
+        nparent: usize,
+        /// Max memory budget in GB
+        #[arg(long, default_value = "28")]
+        max_memory_gb: f32,
     },
 
     /// Quantize a model
@@ -112,7 +145,7 @@ enum Commands {
     Quantize {
         /// Model path
         model: String,
-        /// Quantization method (jang, dynamic3, apex, btl4, mixed, gguf)
+        /// Quantization method (jang, dynamic3, apex, btl4, mixed, gguf, bsqat, onecomp, quept)
         #[arg(short, long)]
         method: String,
         /// Profile/tier for the method
@@ -176,7 +209,7 @@ enum Commands {
         teacher: Option<String>,
     },
 
-/// Train a model with LoRA/QLoRA/DoRA/GRPO
+    /// Train a model with LoRA/QLoRA/DoRA/GRPO/DAPO/DiffusionBlocks/Lopt/LLS
     Train {
         /// Base model path
         model: String,
@@ -185,7 +218,7 @@ enum Commands {
         /// Output directory
         #[arg(short, long)]
         output: PathBuf,
-        /// Training method (lora, qlora, dora, grpo, dapo)
+        /// Training method (lora, qlora, dora, grpo, dapo, diffusionblocks, lopt, lls)
         #[arg(short, long, default_value = "lora")]
         method: String,
         /// LoRA rank
@@ -203,12 +236,63 @@ enum Commands {
         /// Batch size
         #[arg(long, default_value = "4")]
         batch_size: usize,
+        /// Boundary for Lopt (0.01-0.99)
+        #[arg(long, default_value = "0.5")]
+        boundary: f32,
     },
 
     /// IMatrix calibration for quantization
     Imatrix {
         #[command(subcommand)]
         command: ImatrixCommand,
+    },
+
+    /// Inspect a model (architecture, tensors, family)
+    Inspect {
+        /// Model path (local or HuggingFace ID)
+        model: String,
+    },
+
+    /// Model surgery: orca / sparsify / densify / encoder-fuse
+    Surgery {
+        /// Action to perform
+        #[arg(short, long)]
+        action: String,
+        /// Model path
+        model: String,
+        /// Stats path for ORCA
+        #[arg(long)]
+        stats: Option<PathBuf>,
+        /// Threshold for ORCA
+        #[arg(long, default_value = "3.0")]
+        threshold: f32,
+        /// Number of experts for sparsify
+        #[arg(long, default_value = "8")]
+        num_experts: usize,
+        /// Teacher path for densify
+        #[arg(long)]
+        teacher: Option<PathBuf>,
+        /// Temperature for densify
+        #[arg(long, default_value = "1.0")]
+        temperature: f32,
+        /// Decoder path for encoder-fuse
+        #[arg(long)]
+        decoder: Option<PathBuf>,
+        /// Encoder paths for encoder-fuse (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        encoders: Vec<PathBuf>,
+        /// Heads for encoder-fuse
+        #[arg(long, default_value = "8")]
+        heads: usize,
+        /// Max pairs for encoder-fuse
+        #[arg(long, default_value = "8")]
+        max_pairs: usize,
+        /// Stride for encoder-fuse
+        #[arg(long, default_value = "1")]
+        stride: usize,
+        /// Output directory
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
 
     /// Launch terminal UI
@@ -237,8 +321,28 @@ fn main() -> anyhow::Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(commands::download::run(&model, output.as_deref()))
         }
-        Commands::Merge { config, models, method, output, t, generations, population } => {
-            commands::merge::run(config.as_deref(), models.as_deref(), method.as_deref(), &output, t, generations, population)
+        Commands::Merge { config, models, method, output, t, generations, population, hetero_mode, hetero_weights, vae, latent_dim, orca_stats, orca_threshold, num_experts, teacher, distill_temp, nparent, max_memory_gb, shared_dim: _ } => {
+            commands::merge::run(
+                config.as_deref(),
+                models.as_deref(),
+                method.as_deref(),
+                &output,
+                t,
+                generations,
+                population,
+                vae,
+                latent_dim,
+                orca_stats,
+                orca_threshold,
+                num_experts,
+                None, // shared_dim
+                teacher,
+                distill_temp,
+                hetero_mode,
+                hetero_weights,
+                nparent,
+                max_memory_gb,
+            )
         }
         Commands::Quantize { model, method, profile, output, density } => {
             commands::quantize::run(&model, &method, profile.as_deref(), &output, density)
@@ -252,8 +356,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Extract { model, base, output, method, rank, calib, teacher } => {
             commands::extract::run(&model, &base, &output, rank, Some(method), calib, teacher)
         }
-        Commands::Train { model, dataset, output, method, rank, alpha, lr, epochs, batch_size } => {
-            commands::train::run(&model, &dataset, &output, &method, rank, alpha, lr, epochs, batch_size)
+        Commands::Train { model, dataset, output, method, rank, alpha, lr, epochs, batch_size, boundary } => {
+            commands::train::run(&model, &dataset, &output, &method, rank, alpha, lr, epochs, batch_size, Some(boundary))
         }
         Commands::Imatrix { command } => {
             match command {
@@ -264,6 +368,12 @@ fn main() -> anyhow::Result<()> {
                     commands::imatrix::apply_run(std::path::Path::new(&model), std::path::Path::new(&imatrix), std::path::Path::new(&output), &method, profile.as_deref(), density)
                 }
             }
+        }
+        Commands::Inspect { model } => {
+            commands::inspect::run(&model)
+        }
+        Commands::Surgery { action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output } => {
+            commands::surgery::run(action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output)
         }
         Commands::Tui => {
             eprintln!("TUI not yet implemented — use `forge-tui` binary");

@@ -77,3 +77,9 @@ impl MetalKVCache {
     pub fn new() -> anyhow::Result<Self> { Ok(Self) }
     pub fn quant_matmul(&self, _q: &[f32], _k: &[u8]) -> anyhow::Result<Vec<f32>> { Ok(vec![]) }
 }
+
+pub mod mlx_bridge;
+pub mod mlx_flash;
+
+pub use mlx_bridge::*;
+pub use mlx_flash::*;

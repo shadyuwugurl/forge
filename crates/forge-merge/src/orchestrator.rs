@@ -8,6 +8,13 @@ use forge_metal::{MetalMerge, HardwareInfo};
 /// Trait for merge operations
 pub trait MergeOp {
     fn merge_tensor(&self, name: &str, meta: &TensorMeta) -> Result<Vec<f32>>;
+
+    /// Merge one tensor from per-model columns (streaming: one tensor at a
+    /// time, never whole models). The default forwards to `merge_tensor`,
+    /// ignoring the inputs, so single-model ops keep working unchanged.
+    fn merge_tensors(&self, name: &str, meta: &TensorMeta, _inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        self.merge_tensor(name, meta)
+    }
 }
 
 /// Options for merge execution
@@ -50,7 +57,16 @@ pub fn execute_merge(
 
     for name in &all_names {
         if let Some(meta) = stores[0].tensor_meta(name).ok() {
-            let result = op.merge_tensor(name, &meta)?;
+            // Streaming: load this tensor's column from every model that has
+            // it (one tensor at a time — peak is n_models x tensor, never
+            // whole models), then merge via the multi-input entry point.
+            let inputs: Vec<Vec<f32>> = stores.iter()
+                .filter_map(|s| s.tensor_f32(name).ok())
+                .collect();
+            if inputs.is_empty() {
+                continue;
+            }
+            let result = op.merge_tensors(name, &meta, &inputs)?;
 
             // Convert f32 result to bytes based on output dtype
             let bytes = match options.output_dtype {
