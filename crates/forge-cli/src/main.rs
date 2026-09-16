@@ -90,8 +90,8 @@ enum Commands {
         /// Model paths to merge
         #[arg(short, long, num_args = 2..)]
         models: Option<Vec<PathBuf>>,
-        /// Merge method (linear, slerp, ties, dare, della, passthrough, darwin, frankenmerge, latent, orca, expert_weaver, moe_dense_distill, hetero)
-        #[arg(short, long)]
+        /// Merge method (linear, slerp, ties, dare, della, passthrough, darwin, frankenmerge, latent, orca, expert_weaver, moe_dense_distill, hetero, chimera, aether, pocket)
+        #[arg(long)]
         method: Option<String>,
         /// Output directory
         #[arg(short, long)]
@@ -135,6 +135,15 @@ enum Commands {
         /// N-parent merge (number of parents)
         #[arg(long, default_value = "2")]
         nparent: usize,
+        /// Chimera compat threshold (also fallback for -t with chimera)
+        #[arg(long, default_value = "0.5")]
+        chimera_threshold: f32,
+        /// Aether Latin-square grid (7 = 49 layers)
+        #[arg(long, default_value = "7")]
+        aether_grid: usize,
+        /// POCKET experts to keep
+        #[arg(long, default_value = "128")]
+        pocket_keep: usize,
         /// Max memory budget in GB
         #[arg(long, default_value = "28")]
         max_memory_gb: f32,
@@ -183,7 +192,7 @@ enum Commands {
         adapters: PathBuf,
         /// Output directory
         #[arg(short, long)]
-        output: PathBuf,
+        output: Option<PathBuf>,
     },
 
     /// Extract adapter / training data from a fine-tuned model
@@ -251,9 +260,12 @@ enum Commands {
     Inspect {
         /// Model path (local or HuggingFace ID)
         model: String,
+        /// Show Aether Latin-square attention layout
+        #[arg(long)]
+        aether: bool,
     },
 
-    /// Model surgery: orca / sparsify / densify / encoder-fuse
+    /// Model surgery: orca / sparsify / densify / encoder-fuse / chimera / audit / armor / pocket
     Surgery {
         /// Action to perform
         #[arg(short, long)]
@@ -293,6 +305,27 @@ enum Commands {
         /// Output directory
         #[arg(short, long)]
         output: Option<PathBuf>,
+        /// Parent models for chimera (repeatable)
+        #[arg(long)]
+        parents: Vec<PathBuf>,
+        /// Router JSON output for chimera
+        #[arg(long)]
+        router_out: Option<PathBuf>,
+        /// Experts to keep for pocket
+        #[arg(long, default_value = "128")]
+        keep: usize,
+        /// Clean activation dump for audit ({"layers": [[...]]})
+        #[arg(long)]
+        clean: Option<PathBuf>,
+        /// Prefixed activation dump for audit
+        #[arg(long)]
+        prefixed: Option<PathBuf>,
+        /// Score threshold for audit
+        #[arg(long, default_value = "0.99")]
+        audit_threshold: f32,
+        /// Compat threshold for chimera
+        #[arg(long, default_value = "0.5")]
+        chimera_threshold: f32,
     },
 
     /// Launch terminal UI
@@ -321,7 +354,7 @@ fn main() -> anyhow::Result<()> {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(commands::download::run(&model, output.as_deref()))
         }
-        Commands::Merge { config, models, method, output, t, generations, population, hetero_mode, hetero_weights, vae, latent_dim, orca_stats, orca_threshold, num_experts, teacher, distill_temp, nparent, max_memory_gb, shared_dim: _ } => {
+        Commands::Merge { config, models, method, output, t, generations, population, hetero_mode, hetero_weights, vae, latent_dim, orca_stats, orca_threshold, num_experts, teacher, distill_temp, nparent, chimera_threshold, aether_grid, pocket_keep, max_memory_gb } => {
             commands::merge::run(
                 config.as_deref(),
                 models.as_deref(),
@@ -330,17 +363,20 @@ fn main() -> anyhow::Result<()> {
                 t,
                 generations,
                 population,
-                vae,
+                vae.as_deref(),
                 latent_dim,
-                orca_stats,
+                orca_stats.as_deref(),
                 orca_threshold,
                 num_experts,
                 None, // shared_dim
-                teacher,
+                teacher.as_deref(),
                 distill_temp,
                 hetero_mode,
                 hetero_weights,
                 nparent,
+                chimera_threshold,
+                aether_grid,
+                pocket_keep,
                 max_memory_gb,
             )
         }
@@ -351,7 +387,8 @@ fn main() -> anyhow::Result<()> {
             commands::eval::run(&model, benchmarks.as_deref(), evals.as_deref(), original.as_deref())
         }
         Commands::Fuse { base, adapters, output } => {
-            commands::fuse::run(&base, &adapters, &output)
+            let out = output.clone().unwrap_or_else(|| std::path::PathBuf::from("fused"));
+            commands::fuse::run(&base, &adapters, &out)
         }
         Commands::Extract { model, base, output, method, rank, calib, teacher } => {
             commands::extract::run(&model, &base, &output, rank, Some(method), calib, teacher)
@@ -369,11 +406,11 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Commands::Inspect { model } => {
-            commands::inspect::run(&model)
+        Commands::Inspect { model, aether } => {
+            commands::inspect::run(std::path::Path::new(&model), aether)
         }
-        Commands::Surgery { action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output } => {
-            commands::surgery::run(action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output)
+        Commands::Surgery { action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output, parents, router_out, keep, clean, prefixed, audit_threshold, chimera_threshold } => {
+            commands::surgery::run(action, model, stats, threshold, num_experts, teacher, temperature, decoder, encoders, heads, max_pairs, stride, output, parents, router_out, keep, clean, prefixed, audit_threshold, chimera_threshold)
         }
         Commands::Tui => {
             eprintln!("TUI not yet implemented — use `forge-tui` binary");

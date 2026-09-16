@@ -11,7 +11,7 @@ pub fn run(
 ) -> Result<()> {
     eprintln!("Building IMatrix from calibration data...");
     
-    let store = TensorStore::open(model)
+    let store = TensorStore::open(&super::resolve_model(model).0)
         .context("Failed to open model")?;
     
     let calibration_data = load_calibration_data(calib)
@@ -60,7 +60,7 @@ pub fn apply_run(
 ) -> Result<()> {
     eprintln!("Applying IMatrix to quantization...");
     
-    let store = TensorStore::open(model)?;
+    let store = TensorStore::open(&super::resolve_model(model).0)?;
     let imatrix = IMatrix::load(imatrix_path)?;
     
     eprintln!("Loaded IMatrix: {} tensors, {} total groups",

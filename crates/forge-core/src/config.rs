@@ -91,6 +91,24 @@ pub enum MergeMethod {
         #[serde(default)]
         weights: Vec<f32>,
     },
+    /// Chimera compat-gated merge (frozen-router MoE)
+    #[serde(rename = "chimera")]
+    Chimera {
+        #[serde(default = "default_chimera_threshold")]
+        threshold: f32,
+    },
+    /// Aether-7B-5Attn Latin-square MoE layer remap
+    #[serde(rename = "aether")]
+    Aether {
+        #[serde(default = "default_aether_grid")]
+        grid: usize,
+    },
+    /// POCKET-35B structured width prune (experts keep count)
+    #[serde(rename = "pocket")]
+    Pocket {
+        #[serde(default = "default_pocket_keep")]
+        keep: usize,
+    },
 }
 
 /// Quantization method selection
@@ -142,6 +160,56 @@ pub enum QuantMethod {
         #[serde(default = "default_quept_width")]
         width: u8,
     },
+    /// NanoQuant LB-ADMM sub-1-bit (ICML-26)
+    #[serde(rename = "nanoquant")]
+    NanoQuant {
+        #[serde(default = "default_nano_bits")]
+        bits: u8,
+        #[serde(default = "default_nano_iters")]
+        iters: usize,
+    },
+    /// ARB-LLM alternating refinement + codebook-gradient (1-bit)
+    #[serde(rename = "arb")]
+    Arb {
+        #[serde(default = "default_arb_bits")]
+        bits: u8,
+        #[serde(default = "default_true")]
+        reorder: bool,
+    },
+    /// HBLLM wavelet-domain binary coding
+    #[serde(rename = "hbllm")]
+    Hbllm {
+        #[serde(default = "default_hbllm_levels")]
+        levels: u8,
+    },
+    /// DBellQuant dual-bell non-uniform (strict 1-bit)
+    #[serde(rename = "dbell")]
+    Dbell {
+        #[serde(default = "default_dbell_bits")]
+        bits: u8,
+    },
+    /// AF1 strict-1.00bpw (no residual)
+    #[serde(rename = "af1")]
+    Af1 {
+        #[serde(default = "default_af1_bits")]
+        bits: u8,
+    },
+    /// BTC-LLM vector codebook
+    #[serde(rename = "btcllm")]
+    BtcLlm {
+        #[serde(default = "default_btc_bits")]
+        bits: u8,
+        #[serde(default = "default_btc_codebook")]
+        codebook: usize,
+    },
+    /// LittleBit residual-compensated sub-1-bit (0.1-1.0bpw)
+    #[serde(rename = "littlebit")]
+    LittleBit {
+        #[serde(default = "default_little_bits")]
+        bits: u8,
+        #[serde(default = "default_true")]
+        residual: bool,
+    },
 }
 
 fn default_true() -> bool { true }
@@ -155,6 +223,18 @@ fn default_bsqat_block() -> usize { 128 }
 fn default_onecomp_hi() -> u8 { 4 }
 fn default_onecomp_lo() -> u8 { 2 }
 fn default_quept_width() -> u8 { 4 }
+fn default_chimera_threshold() -> f32 { 0.5 }
+fn default_aether_grid() -> usize { 7 }
+fn default_pocket_keep() -> usize { 128 }
+fn default_nano_bits() -> u8 { 1 }
+fn default_nano_iters() -> usize { 50 }
+fn default_arb_bits() -> u8 { 1 }
+fn default_hbllm_levels() -> u8 { 3 }
+fn default_dbell_bits() -> u8 { 1 }
+fn default_af1_bits() -> u8 { 1 }
+fn default_btc_bits() -> u8 { 1 }
+fn default_btc_codebook() -> usize { 256 }
+fn default_little_bits() -> u8 { 1 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum JangOutputFormat {

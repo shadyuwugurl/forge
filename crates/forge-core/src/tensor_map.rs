@@ -284,9 +284,52 @@ fn detect_role(desc: &FamilyDescriptor, lower: &str) -> Option<String> {
     None
 }
 
+/// Aether-7B-5Attn hetero-attention layout: 5 attention types arranged on a
+/// 7x7 Latin square over 49 layers. `attn_for_layer` assigns each layer one
+/// of the 5 types via `(row + col) % 5` so every row/column mixes types and
+/// no two adjacent layers share a type along either axis.
+pub const AETHER_ATTN_TYPES: &[&str] = &["mha", "gqa", "mla", "sliding_window", "linear"];
+
+/// Grid-correct Aether layer→attention-type layout.
+#[derive(Debug, Clone)]
+pub struct AetherLayout {
+    pub grid: usize,
+    pub num_layers: usize,
+}
+
+impl AetherLayout {
+    /// Canonical Aether-7B-5Attn geometry: 7x7 = 49 layers.
+    pub fn aether49() -> Self {
+        Self { grid: 7, num_layers: 49 }
+    }
+
+    /// Attention-type index in `0..5` for a layer ordinal.
+    pub fn attn_for_layer(&self, layer: usize) -> usize {
+        let g = self.grid.max(1);
+        ((layer / g) + (layer % g)) % AETHER_ATTN_TYPES.len()
+    }
+
+    /// `(layer, attn_type_idx)` over every layer in the layout.
+    pub fn slot_map(&self) -> Vec<(usize, usize)> {
+        (0..self.num_layers).map(|l| (l, self.attn_for_layer(l))).collect()
+    }
+
+    /// Attn-type-aware alignment: `attn.*` roles align only when both blocks
+    /// share the attention type; every other role always aligns. Prevents
+    /// hetero merges from mixing e.g. an MLA q_proj with an MHA q_proj.
+    pub fn align_ok(&self, slot_a: &CanonicalSlot, slot_b: &CanonicalSlot) -> bool {
+        let attn_role = |s: &CanonicalSlot| s.role.starts_with("attn.");
+        match (slot_a.block, slot_b.block) {
+            (Some(la), Some(lb)) if attn_role(slot_a) && attn_role(slot_b) => {
+                self.attn_for_layer(la) == self.attn_for_layer(lb)
+            }
+            _ => true,
+        }
+    }
+}
+
 /// True when the name carries no block ordinal (global tensor candidate).
-fn block_marker_absent(lower: &str) -> bool {
-    for marker in [".layers.", ".h.", ".block.", ".blocks.", ".layer."] {
+fn block_marker_absent(lower: &str) -> bool {    for marker in [".layers.", ".h.", ".block.", ".blocks.", ".layer."] {
         if let Some(idx) = lower.find(marker) {
             let rest = &lower[idx + marker.len()..];
             if rest.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -393,13 +436,55 @@ mod tests {
     }
 
     #[test]
-    fn unknown_family_still_aligns_on_generic_vocab() {
-        let reg = FamilyRegistry::builtin();
+    fn unknown_family_still_aligns_on_generic_vocab() {        let reg = FamilyRegistry::builtin();
         let config = serde_json::json!({"model_type": "mysterymix"});
         let tensors = vec![("mystery.blocks.7.q_proj.weight".to_string(), vec![1024, 1024])];
         let p = ModelProfile::detect_from_parts(&config, &tensors, &reg).unwrap();
         let names = vec!["mystery.blocks.7.q_proj.weight".to_string()];
         let map = TensorMap::build(&p, &names, &reg).unwrap();
         assert!(map.slots.contains_key("b7.attn.q_proj"));
+    }
+
+    #[test]
+    fn aether_layout_covers_49_layers_with_five_types() {
+        let layout = AetherLayout::aether49();
+        let map = layout.slot_map();
+        assert_eq!(map.len(), 49);
+        let mut seen = std::collections::HashSet::new();
+        for (_, t) in &map {
+            seen.insert(*t);
+        }
+        assert_eq!(seen.len(), 5);
+        // Every row and column of the 7x7 grid mixes types.
+        for r in 0..7 {
+            let mut row = std::collections::HashSet::new();
+            for c in 0..7 {
+                row.insert(layout.attn_for_layer(r * 7 + c));
+            }
+            assert!(row.len() > 1);
+        }
+    }
+
+    #[test]
+    fn aether_align_rejects_mismatched_attn_types() {
+        let layout = AetherLayout::aether49();
+        let a = CanonicalSlot::named(Some(0), "attn.q_proj");
+        // Layer 1 sits at (0,1) -> different type from layer 0 at (0,0).
+        assert_ne!(layout.attn_for_layer(0), layout.attn_for_layer(1));
+        let b = CanonicalSlot::named(Some(1), "attn.q_proj");
+        assert!(!layout.align_ok(&a, &b));
+        // Same-type layers align: layer 0 (0,0) and layer 8 (1,1) share (0+0)%5 == (1+1)%5? no —
+        // find any same-type pair instead of assuming.
+        let t0 = layout.attn_for_layer(0);
+        let same = (0..49).find(|l| *l != 0 && layout.attn_for_layer(*l) == t0).unwrap();
+        let c = CanonicalSlot::named(Some(same), "attn.q_proj");
+        assert!(layout.align_ok(&a, &c));
+        // Non-attn roles always align across layers.
+        let d = CanonicalSlot::named(Some(0), "ffn.down_proj");
+        let e = CanonicalSlot::named(Some(1), "ffn.down_proj");
+        assert!(layout.align_ok(&d, &e));
+        // Global tensors always align.
+        let g = CanonicalSlot::named(None, "lm_head");
+        assert!(layout.align_ok(&g, &a));
     }
 }

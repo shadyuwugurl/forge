@@ -39,7 +39,8 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
         return Ok(());
     }
 
-    let store = TensorStore::open(std::path::Path::new(model))?;
+    let (sf, _) = super::resolve_model(std::path::Path::new(model));
+    let store = TensorStore::open(&sf)?;
     std::fs::create_dir_all(output)?;
     eprintln!("Quantizing {} with method '{}'", model, method);
     match method {
@@ -97,7 +98,49 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
                 q.quantize_at(tensor, &calib, width)
             })?;
         }
-        _ => return Err(anyhow::anyhow!("Unknown quant method: {} (try jang, dynamic3, apex, btl4, mixed, gguf, bsqat, onecomp, quept, kv-cache)", method)),
+        "nanoquant"|"nano" => {
+            let bits: u8 = profile.and_then(|p| p.parse().ok()).unwrap_or(1);
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::NanoQuantQuantizer::new(bits, 50, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "arb" => {
+            let bits: u8 = profile.and_then(|p| p.parse().ok()).unwrap_or(1);
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::ArbQuantizer::new(bits, true, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "hbllm" => {
+            let levels: u8 = profile.and_then(|p| p.parse().ok()).unwrap_or(3);
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::HbllmQuantizer::new(levels, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "dbell"|"dbellquant" => {
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::DbellQuantizer::new(1, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "af1" => {
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::Af1Quantizer::new(1, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "btcllm"|"btc" => {
+            // profile "bits:codebook", e.g. "1:2". codebook must equal 2^bits.
+            let bits: u8 = profile.and_then(|p| p.split(':').next().and_then(|s| s.parse().ok())).unwrap_or(1);
+            let codebook: usize = profile.and_then(|p| p.split(':').nth(1).and_then(|s| s.parse().ok())).unwrap_or(2);
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::BtcQuantizer::new(bits, codebook, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        "littlebit" => {
+            let bits: u8 = profile.and_then(|p| p.parse().ok()).unwrap_or(1);
+            let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
+            let q = forge_quant::LittleBitQuantizer::new(bits, true, group);
+            quantize_per_tensor(&store, output, |tensor| q.quantize(tensor))?;
+        }
+        _ => return Err(anyhow::anyhow!("Unknown quant method: {} (try jang, dynamic3, apex, btl4, mixed, gguf, bsqat, onecomp, quept, nanoquant, arb, hbllm, dbell, af1, btcllm, littlebit, kv-cache)", method)),
     }
     eprintln!("Quantized model written to {}", output.display());
     Ok(())

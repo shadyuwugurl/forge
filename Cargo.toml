@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.7.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["forge contributors"]
@@ -32,6 +32,7 @@ memmap2 = "0.9"
 rayon = "1.10"
 half = { version = "2", features = ["serde", "std"] }
 nalgebra = "0.33"
+bytemuck = "1"
 
 # Config
 serde = { version = "1", features = ["derive"] }

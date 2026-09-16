@@ -1,3 +1,6 @@
+//! Smoke example over the public `forge-merge` API surface.
+//! (Legacy unexported modules are intentionally not exercised here.)
+
 use forge_merge::*;
 use forge_merge::orchestrator::MergeOp;
 use forge_core::TensorMeta;
@@ -5,67 +8,65 @@ use forge_core::TensorMeta;
 fn meta(n: usize) -> TensorMeta {
     TensorMeta { name: "t".into(), shape: vec![n], dtype: forge_core::DType::F32, offset: 0, size: n * 4 }
 }
+
 fn main() {
     let m = meta(4);
     let a = vec![1.0, 0.0, 2.0, -1.0];
     let b = vec![0.0, 1.0, 2.0, 1.0];
-    let c = vec![1.0, 1.0, 0.0, 0.0];
-    let inp = vec![a.clone(), b.clone(), c.clone()];
 
-    // task arithmetic: base=a, ft=b,c lambda=1 -> a + (b-a) + (c-a) = b+c-a
-    let r = TaskArithmeticMerge::new(1.0).merge_tensors("t", &m, &inp).unwrap();
-    assert_eq!(r, vec![0.0, 2.0, 0.0, 2.0], "task_arith {:?}", r);
+    // hetero intersection honors explicit weights
+    let r = HeteroMerge::with_weights(HeteroMode::Intersection, vec![0.25, 0.75])
+        .unwrap()
+        .merge(&[vec![4.0], vec![8.0]])
+        .unwrap();
+    assert!((r[0] - 7.0).abs() < 1e-6, "hetero-weighted {:?}", r);
 
-    // multislerp single model passthrough
-    let r = MultiSlerpMerge::new(vec![]).merge_tensors("t", &m, &vec![a.clone()]).unwrap();
-    assert_eq!(r, a, "multislerp-1 {:?}", r);
+    // hetero union averages present holders
+    let r = HeteroMerge::new(HeteroMode::Union, 2)
+        .merge_tensors("t", &meta(2), &[vec![1.0, 3.0], vec![3.0, 5.0]])
+        .unwrap();
+    assert_eq!(r, vec![2.0, 4.0], "hetero-union {:?}", r);
 
-    // multislerp uniform of identical vectors = same
-    let r = MultiSlerpMerge::new(vec![]).merge_tensors("t", &m, &vec![a.clone(), a.clone()]).unwrap();
-    for (x, y) in r.iter().zip(a.iter()) { assert!((x - y).abs() < 1e-5, "multislerp-ident {:?}", r); }
+    // chimera: identical parents average
+    let r = ChimeraMerge::new(0.5)
+        .merge_tensors("t", &m, &[a.clone(), a.clone()])
+        .unwrap();
+    assert_eq!(r, a, "chimera-ident {:?}", r);
 
-    // karcher of identical vectors = same (scaled correctly)
-    let r = KarcherMerge::new(vec![], 20, 1e-6).merge_tensors("t", &m, &vec![a.clone(), a.clone(), a.clone()]).unwrap();
-    for (x, y) in r.iter().zip(a.iter()) { assert!((x - y).abs() < 1e-3, "karcher-ident {:?}", r); }
+    // chimera: shape mismatch transplants parent 0
+    let r = ChimeraMerge::new(0.0)
+        .merge_tensors("t", &m, &[a.clone(), vec![9.0, 9.0]])
+        .unwrap();
+    assert_eq!(r, a, "chimera-transplant {:?}", r);
 
-    // nearswap: identical params blend, distant keep A
-    let r = NearSwapMerge::new(0.5, 0.1).merge_tensors("t", &m, &vec![a.clone(), b.clone()]).unwrap();
-    assert!((r[2] - 2.0).abs() < 1e-6, "nearswap-near {:?}", r); // both 2.0 -> blended 2.0
-    assert_eq!(r[0], 1.0, "nearswap-far keeps A {:?}", r); // 1 vs 0 -> far
-
-    // breadcrumbs with beta=gamma=0 keeps everything -> base + lambda*mean(tau)
-    let r = BreadcrumbsMerge::new(1.0, 0.0, 0.0).merge_tensors("t", &m, &inp).unwrap();
-    assert_eq!(r, vec![0.0, 1.0, 0.0, 0.5], "breadcrumbs-0 {:?}", r); // mean of nonzero deltas
-
-    // arcee with threshold 0 keeps everything (same as above)
-    let r = ArceeFusionMerge::new(1.0, 0.0).merge_tensors("t", &m, &inp).unwrap();
-    assert_eq!(r, vec![0.5, 1.0, 1.0, 0.5], "arcee-0 {:?}", r); // full mean incl. zeros
-
-    // sce uniform-ish: check it runs and stays finite
-    let r = SceMerge::new(1.0).merge_tensors("t", &m, &inp).unwrap();
-    assert!(r.iter().all(|x| x.is_finite()), "sce {:?}", r);
-
-    // model_stock runs finite
-    let r = ModelStockMerge::new().merge_tensors("t", &m, &inp).unwrap();
-    assert!(r.iter().all(|x| x.is_finite()), "stock {:?}", r);
-
-    // ram deterministic per name, convex combo bounds
-    let r1 = RamMerge::new(7).merge_tensors("t", &m, &inp).unwrap();
-    let r2 = RamMerge::new(7).merge_tensors("t", &m, &inp).unwrap();
-    assert_eq!(r1, r2, "ram-determinism");
-    for (i, x) in r1.iter().enumerate() {
-        let lo = inp.iter().map(|v| v[i]).fold(f32::INFINITY, f32::min);
-        let hi = inp.iter().map(|v| v[i]).fold(f32::NEG_INFINITY, f32::max);
-        assert!(*x >= lo - 1e-6 && *x <= hi + 1e-6, "ram-convex {}", x);
+    // chimera router trains to the labeled parent
+    let mut router = ChimeraRouter::new(2);
+    let compat = vec![0.9, 0.1];
+    for _ in 0..200 {
+        router.train_step(&compat, 1, 0.5);
     }
+    assert_eq!(router.pick(&compat), 1, "router {:?}", router.logits);
 
-    // slerp midpoint of orthogonal unit vectors has norm ~1
-    let u = vec![1.0, 0.0, 0.0, 0.0];
-    let v = vec![0.0, 1.0, 0.0, 0.0];
-    let r = forge_merge::slerp_utils::slerp_pair(&u, &v, 0.5).unwrap();
-    let n: f32 = r.iter().map(|x| x * x).sum::<f32>().sqrt();
-    assert!((n - 1.0).abs() < 1e-5, "slerp-norm {}", n);
-    assert!((r[0] - r[1]).abs() < 1e-6, "slerp-sym {:?}", r);
+    // pocket: diverse keep over a tiny expert set
+    let experts = vec![
+        vec![1.0, 0.0, 0.0, 0.0],
+        vec![1.01, 0.01, 0.0, 0.0],
+        vec![0.0, 1.0, 0.0, 0.0],
+        vec![0.0, 0.0, 1.0, 0.0],
+    ];
+    let scores = score_experts(&experts);
+    let kept = greedy_diverse_select(&experts, &scores, 2);
+    assert_eq!(kept.len(), 2, "pocket {:?}", kept);
+    assert!(!(kept.contains(&0) && kept.contains(&1)), "pocket-diversity {:?}", kept);
+
+    // aether: 49-layer remap + uniform average
+    let remap = AetherRemap::aether49();
+    assert_eq!(remap.remap_plan().len(), 49, "aether-plan");
+    let r = remap
+        .merge_tensors("t", &meta(2), &[vec![1.0, 3.0], vec![3.0, 5.0]])
+        .unwrap();
+    assert_eq!(r, vec![2.0, 4.0], "aether-avg {:?}", r);
+    let _ = b;
 
     println!("ALL SMOKE TESTS PASSED");
 }

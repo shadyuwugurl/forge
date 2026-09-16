@@ -1,10 +1,11 @@
 use std::path::Path;
 use anyhow::{Result, Context};
-use forge_core::{ModelProfile, TensorStore, TensorMeta, FamilyRegistry, TensorMap, DType};
-use forge_io::TensorStore as _;
+use forge_core::{ModelProfile, TensorMeta, FamilyRegistry, TensorMap, tensor_map::AetherLayout};
+use forge_io::TensorStore;
 
-pub fn run(model: &Path) -> Result<()> {
-    let store = TensorStore::open(model)?;
+pub fn run(model: &Path, aether: bool) -> Result<()> {
+    let (store_path, config_dir) = super::resolve_model(model);
+    let store = TensorStore::open(&store_path)?;
     
     // Collect tensor names and shapes for profile detection
     let mut tensor_shapes = Vec::new();
@@ -15,7 +16,7 @@ pub fn run(model: &Path) -> Result<()> {
     }
     
     let registry = FamilyRegistry::builtin();
-    let profile = ModelProfile::detect(model, &tensor_shapes)?;
+    let profile = ModelProfile::detect(&config_dir, &tensor_shapes)?;
     let tensor_names: Vec<String> = tensor_shapes.iter().map(|(n, _)| n.clone()).collect();
     let tensor_map = TensorMap::build(&profile, &tensor_names, &registry)?;
     
@@ -35,7 +36,7 @@ pub fn run(model: &Path) -> Result<()> {
     eprintln!("Norm type: {:?}", profile.norm);
     eprintln!("Positional type: {:?}", profile.positional);
     eprintln!("Tokenizer type: {:?}", profile.tokenizer);
-    eprintln!("MOE experts: {}", profile.moe_experts);
+    eprintln!("MOE experts: {:?}", profile.moe_experts);
     eprintln!("Quirks: {:?}", profile.quirks);
     
     // Print tensor map stats
@@ -63,6 +64,17 @@ pub fn run(model: &Path) -> Result<()> {
             eprintln!("  ... and {} more", unmapped.len() - 20);
         }
     }
-    
+
+    if aether {
+        eprintln!("\n=== Aether Latin-square layout ===");
+        if profile.family != "aether" {
+            eprintln!("  Note: detected family is '{}', not aether — showing reference 7x7 map.", profile.family);
+        }
+        let layout = AetherLayout::aether49();
+        for (layer, t) in layout.slot_map() {
+            eprintln!("  layer {:>2} -> {}", layer, forge_core::tensor_map::AETHER_ATTN_TYPES[t]);
+        }
+    }
+
     Ok(())
 }

@@ -18,7 +18,7 @@ pub struct OrcaStat {
 #[derive(Debug, Clone)]
 pub struct OrcaAllocator {
     pub threshold: f32,
-    ratios: HashMap<String, f32>,
+    pub ratios: HashMap<String, f32>,
 }
 
 impl OrcaAllocator {

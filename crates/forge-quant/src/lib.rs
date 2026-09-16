@@ -8,6 +8,23 @@ pub mod imatrix;
 pub mod bsqat;
 pub mod onecomp;
 pub mod quept;
+pub mod mlx_pack;
+pub mod nanoquant;
+pub mod arb;
+pub mod hbllm;
+pub mod dbell;
+pub mod af1;
+pub mod btcllm;
+pub mod littlebit;
+
+pub use mlx_pack::{packed_len, scales_len, pack_uniform, unpack_uniform};
+pub use nanoquant::NanoQuantQuantizer;
+pub use arb::ArbQuantizer;
+pub use hbllm::HbllmQuantizer;
+pub use dbell::DbellQuantizer;
+pub use af1::Af1Quantizer;
+pub use btcllm::BtcQuantizer;
+pub use littlebit::LittleBitQuantizer;
 
 pub use jang::JangQuantizer;
 pub use dynamic3::Dynamic3Quantizer;

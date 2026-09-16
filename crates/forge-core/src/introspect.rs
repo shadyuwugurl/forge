@@ -388,6 +388,17 @@ impl FamilyRegistry {
         zamba.hybrid_ssm_attn = true;
         zamba.quirks.push("shared global attention + mamba blocks".into());
         r.families.push(zamba);
+        // --- Aether-7B-5Attn (hetero-attention MoE, 7x7 Latin square) ---
+        let mut aether = FamilyDescriptor::new(
+            "aether",
+            &["aether"],
+            &["AetherForCausalLM"],
+            "model.layers",
+            "self_attn",
+        );
+        aether.moe = true;
+        aether.quirks.push("49 layers, 5 hetero attn types on 7x7 Latin square; see AetherLayout".into());
+        r.families.push(aether);
         // --- Nemotron ---
         r.families.push(FamilyDescriptor::new(
             "nemotron",
@@ -893,5 +904,27 @@ mod tests {
         let p = ModelProfile::detect_from_parts(&c, &llama_tensors(), &FamilyRegistry::builtin()).unwrap();
         assert_eq!(p.attention, AttentionType::Mla);
         assert_eq!(p.positional, PositionalType::YaRN);
+    }
+
+    #[test]
+    fn detects_aether_family_and_latin_square_geometry() {
+        let tensors = vec![
+            ("model.layers.0.self_attn.q_proj.weight".into(), vec![4096, 4096]),
+            ("model.layers.48.self_attn.q_proj.weight".into(), vec![4096, 4096]),
+            ("model.layers.0.block_sparse_moe.gate.weight".into(), vec![8, 4096]),
+            ("model.layers.0.block_sparse_moe.experts.0.w1.weight".into(), vec![14336, 4096]),
+            ("model.layers.0.block_sparse_moe.experts.7.w1.weight".into(), vec![14336, 4096]),
+        ];
+        let c = serde_json::json!({
+            "model_type": "aether",
+            "architectures": ["AetherForCausalLM"],
+            "hidden_size": 4096,
+            "num_hidden_layers": 49,
+        });
+        let p = ModelProfile::detect_from_parts(&c, &tensors, &FamilyRegistry::builtin()).unwrap();
+        assert_eq!(p.family, "aether");
+        assert_eq!(p.num_layers, 49);
+        assert!(p.moe_experts.is_some());
+        assert!(p.quirks.iter().any(|q| q.contains("Latin square")));
     }
 }

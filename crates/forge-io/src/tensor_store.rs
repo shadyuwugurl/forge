@@ -14,6 +14,9 @@ pub struct TensorStore {
     mmap: Mmap,
     index: HashMap<String, TensorInfo>,
     total_params: usize,
+    /// Byte offset where the tensor data section starts (8 + header len).
+    /// `data_offsets` in the JSON header are relative to this base.
+    data_base: usize,
 }
 
 struct TensorInfo {
@@ -32,8 +35,10 @@ impl TensorStore {
             .context("memory mapping file")?;
 
         // Parse the header to build tensor index
-        let (offset, metadata) = SafeTensors::read_metadata(&mmap)
+        let (header_len, metadata) = SafeTensors::read_metadata(&mmap)
             .map_err(|e| anyhow::anyhow!("safetensors parse error: {}", e))?;
+        // data_offsets are relative to the end of the JSON header.
+        let data_base = 8 + header_len;
 
         let mut index = HashMap::new();
         let mut total_params = 0;
@@ -75,6 +80,7 @@ impl TensorStore {
             mmap,
             index,
             total_params,
+            data_base,
         })
     }
 
@@ -107,7 +113,7 @@ impl TensorStore {
         let info = self.index.get(name)
             .with_context(|| format!("tensor '{}' not found", name))?;
 
-        let start = info.offset;
+        let start = self.data_base + info.offset;
         let end = start + info.size;
         Ok(&self.mmap[start..end])
     }
@@ -117,7 +123,7 @@ impl TensorStore {
         let info = self.index.get(name)
             .with_context(|| format!("tensor '{}' not found", name))?;
 
-        let start = info.offset;
+        let start = self.data_base + info.offset;
         let end = start + info.size;
         let bytes = &self.mmap[start..end];
 

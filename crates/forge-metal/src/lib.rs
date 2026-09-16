@@ -80,6 +80,8 @@ impl MetalKVCache {
 
 pub mod mlx_bridge;
 pub mod mlx_flash;
+pub mod metal_gemv;
 
 pub use mlx_bridge::*;
 pub use mlx_flash::*;
+pub use metal_gemv::*;

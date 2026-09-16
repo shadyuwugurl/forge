@@ -14,6 +14,9 @@ pub mod expert_weaver;
 pub mod hetero;
 pub mod moe_dense_distill;
 pub mod moe_bridge;
+pub mod chimera;
+pub mod pocket;
+pub mod aether;
 
 pub use linear::LinearMerge;
 pub use slerp::SlerpMerge;
@@ -30,3 +33,6 @@ pub use expert_weaver::ExpertWeaver;
 pub use hetero::{HeteroMerge, HeteroMode, SlotPlan};
 pub use moe_dense_distill::MoeDenseDistill;
 pub use moe_bridge::MoeBridge;
+pub use chimera::{ChimeraMerge, ChimeraRouter, MergeDecision, score_compat, decide};
+pub use pocket::{PocketPrune, expert_score, score_experts, greedy_diverse_select, mixed_precision_plan};
+pub use aether::AetherRemap;
