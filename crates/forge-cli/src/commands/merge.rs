@@ -250,9 +250,9 @@ fn execute_config_merge(
     Ok(())
 }
 
-fn create_merge_op(method: &MergeMethod, n_models: usize) -> Result<Box<dyn MergeOp>> {
+fn create_merge_op(method: &MergeMethod, n_models: usize) -> Result<Box<dyn MergeOp + Sync>> {
     // Use a helper to coerce each arm to Box<dyn MergeOp>
-    fn linear_merge() -> Box<dyn MergeOp> {
+    fn linear_merge() -> Box<dyn MergeOp + Sync> {
         Box::new(LinearMerge { 
             models: vec![], 
             normalize: true 

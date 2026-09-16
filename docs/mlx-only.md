@@ -36,5 +36,8 @@ host-side table lookup — out of scope for the fused kernel.)
   -downloadComponent MetalToolchain` once, then
   `xcrun -sdk macosx metal -c crates/forge-metal/kernels/gemv_quant.metal
   -o /tmp/gemv_quant.air`.
+  VERIFIED 2026-09-16: toolchain resolves via Xcode.app, kernel compiles
+  clean (exit 0, /tmp/gemv_quant.air 4752 bytes). Re-verify after any
+  kernel edit with the `xcrun metal -c` line above.
 - Memory gate (M4): merge/quant stream per-tensor; 7B-class models stay under
   28GB RSS on a 32GB Mac (mmap weights + ≤5GB shards + one tensor live).

@@ -59,14 +59,41 @@ impl QuantGemv {
             bail!("x too short: {} < {}", x.len(), cols);
         }
         let mut y = vec![0.0f32; rows];
+        // Hoist `s / mid` per group run and unroll 4-wide: the inner loop
+        // becomes shift + mask + FMA (same math as ((code-mid)/mid)*s*x,
+        // reassociated — matches the oracle within 1e-5).
         for r in 0..rows {
+            let row_off = r * cols;
+            let s_off = r * groups_per_row;
+            // Build tables for this row's groups on demand.
             let mut acc = 0.0f32;
-            for j in 0..cols {
-                let idx = r * cols + j;
-                let byte = packed[idx / per_byte];
-                let code = ((byte as u32 >> ((idx % per_byte) * self.bits as usize)) & mask) as f32;
-                let s = scales[r * groups_per_row + j / self.group];
-                acc += ((code - mid) / mid) * s * x[j];
+            let mut j = 0usize;
+            while j < cols {
+                let g = j / self.group;
+                let s = scales[s_off + g];
+                let inv = s / mid;
+                let g_end = ((g + 1) * self.group).min(cols);
+                // Unrolled 4-wide FMA over one group run.
+                let mut k = j;
+                while k + 4 <= g_end {
+                    let mut v = [0.0f32; 4];
+                    for t in 0..4 {
+                        let idx = row_off + k + t;
+                        let byte = packed[idx / per_byte];
+                        let code = ((byte as u32 >> ((idx % per_byte) * self.bits as usize)) & mask) as f32;
+                        v[t] = (code - mid) * inv;
+                    }
+                    acc += v[0] * x[k] + v[1] * x[k + 1] + v[2] * x[k + 2] + v[3] * x[k + 3];
+                    k += 4;
+                }
+                while k < g_end {
+                    let idx = row_off + k;
+                    let byte = packed[idx / per_byte];
+                    let code = ((byte as u32 >> ((idx % per_byte) * self.bits as usize)) & mask) as f32;
+                    acc += (code - mid) * inv * x[k];
+                    k += 1;
+                }
+                j = g_end;
             }
             y[r] = acc;
         }

@@ -7,19 +7,83 @@ use bytemuck::cast_slice;
 
 fn quantize_per_tensor<F>(store: &TensorStore, output: &Path, quantize_fn: F) -> Result<()>
 where
-    F: Fn(&[f32]) -> Result<(Vec<u8>, Vec<f32>)>,
+    F: Fn(&[f32]) -> Result<(Vec<u8>, Vec<f32>)> + Sync,
 {
     std::fs::create_dir_all(output)?;
     let names = store.tensor_names();
     let mut writer = forge_io::StreamingWriter::new(output, 5 * 1024 * 1024 * 1024)?;
 
-    for name in names {
-        let tensor = store.tensor_f32(&name)?;
-        let (packed, scales) = quantize_fn(&tensor)?;
-        // Write both packed and scales as separate tensors
-        let meta = store.tensor_meta(&name)?;
-        writer.write_tensor(&name, &packed, "U8", &meta.shape)?;
-        writer.write_tensor(&format!("{}_scales", name), &bytemuck::cast_slice(&scales), "F16", &[scales.len()])?;
+    // M5c: same parallel pipeline as merge — workers quantize, main
+    // thread writes (packed + scales) in arrival order. 4GB byte budget
+    // caps in-flight tensors; FORGE_WORKERS overrides worker count.
+    let workers = std::env::var("FORGE_WORKERS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
+        .max(1)
+        .min(names.len().max(1));
+    {
+        use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+        use std::sync::mpsc::sync_channel;
+        const BUDGET: u64 = 4 * 1024 * 1024 * 1024;
+        let next = AtomicUsize::new(0);
+        let in_flight = AtomicU64::new(0);
+        let (tx, rx) = sync_channel::<Option<(String, Vec<usize>, Vec<u8>, Vec<f32>)>>(workers * 2);
+        let (next_r, flight_r, names_r, qf) = (&next, &in_flight, &names, &quantize_fn);
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                let tx = tx.clone();
+                scope.spawn(move || {
+                    loop {
+                        let i = next_r.fetch_add(1, Ordering::Relaxed);
+                        let Some(name) = names_r.get(i) else { break };
+                        let meta = match store.tensor_meta(name) {
+                            Ok(m) => m,
+                            Err(_) => {
+                                let _ = tx.send(None);
+                                continue;
+                            }
+                        };
+                        let cost = (meta.size as u64).saturating_mul(2).max(1);
+                        while flight_r.fetch_add(cost, Ordering::SeqCst) + cost > BUDGET {
+                            flight_r.fetch_sub(cost, Ordering::SeqCst);
+                            std::thread::yield_now();
+                        }
+                        let msg = (|| {
+                            let tensor = store.tensor_f32(name).ok()?;
+                            let (packed, scales) = qf(&tensor).ok()?;
+                            Some((name.to_string(), meta.shape.clone(), packed, scales))
+                        })();
+                        flight_r.fetch_sub(cost, Ordering::SeqCst);
+                        if tx.send(msg).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(tx);
+            let mut done = 0usize;
+            for msg in rx {
+                if let Some((name, shape, packed, scales)) = msg {
+                    writer.write_tensor(&name, &packed, "U8", &shape)?;
+                    writer.write_tensor(
+                        &format!("{}_scales", name),
+                        bytemuck::cast_slice(&scales),
+                        "F16",
+                        &[scales.len()],
+                    )?;
+                }
+                done += 1;
+                if done >= names.len() {
+                    break;
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        })?;
     }
 
     writer.finalize("model")?;
@@ -83,7 +147,7 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
             let hi_bits: u8 = profile.and_then(|p| p.split(':').next().and_then(|s| s.parse().ok())).unwrap_or(4);
             let lo_bits: u8 = profile.and_then(|p| p.split(':').nth(1).and_then(|s| s.parse().ok())).unwrap_or(2);
             let group: usize = density.and_then(|d| Some(d as usize)).unwrap_or(128);
-            let mut q = forge_quant::OneCompQuantizer::new(hi_bits, lo_bits, group, u64::MAX);
+            let q = forge_quant::OneCompQuantizer::new(hi_bits, lo_bits, group, u64::MAX);
             quantize_per_tensor(&store, output, |tensor| {
                 let plan = q.plan_bits(&[tensor.len()]);
                 q.quantize(tensor, plan[0])

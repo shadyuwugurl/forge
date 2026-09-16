@@ -154,7 +154,7 @@ enum Commands {
     Quantize {
         /// Model path
         model: String,
-        /// Quantization method (jang, dynamic3, apex, btl4, mixed, gguf, bsqat, onecomp, quept)
+        /// Quantization method (jang, dynamic3, apex, btl4, mixed, gguf, bsqat, onecomp, quept, nanoquant, arb, hbllm, dbell, af1, btcllm, littlebit)
         #[arg(short, long)]
         method: String,
         /// Profile/tier for the method

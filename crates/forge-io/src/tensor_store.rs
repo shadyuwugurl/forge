@@ -129,10 +129,29 @@ impl TensorStore {
 
         match info.dtype {
             DType::F32 => {
-                let floats: Vec<f32> = bytes.chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
-                Ok(floats)
+                // M5: single memcpy instead of per-element from_le_bytes.
+                // All-valid bit patterns: any 4 bytes are a valid f32.
+                #[cfg(target_endian = "little")]
+                {
+                    let n = bytes.len() / 4;
+                    let mut out = Vec::with_capacity(n);
+                    unsafe {
+                        out.set_len(n);
+                        std::ptr::copy_nonoverlapping(
+                            bytes.as_ptr(),
+                            out.as_mut_ptr() as *mut u8,
+                            n * 4,
+                        );
+                    }
+                    Ok(out)
+                }
+                #[cfg(not(target_endian = "little"))]
+                {
+                    let floats: Vec<f32> = bytes.chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect();
+                    Ok(floats)
+                }
             }
             DType::F16 => {
                 let floats: Vec<f32> = bytes.chunks_exact(2)
