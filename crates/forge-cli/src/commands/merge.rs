@@ -55,11 +55,12 @@ pub fn run(
                                               &hetero_mode, hetero_weights_vec, nparent,
                                               chimera_threshold, aether_grid, pocket_keep)?;
         
-        // Open all model stores
+        // Open all model stores (TensorStore::open handles single-file + sharded dirs)
         let mut stores = Vec::new();
         for path in model_paths {
-            let (sf, _) = super::resolve_model(path);
-            let store = TensorStore::open(&sf)?;
+            let store = TensorStore::open(path)
+                .with_context(|| format!("opening model {}", path.display()))?;
+            eprintln!("  loaded {}: {} tensors, {:.2}B params", path.display(), store.tensor_names().len(), store.total_params() as f64 / 1e9);
             stores.push(store);
         }
         
@@ -193,18 +194,23 @@ fn execute_merge_impl(
 /// output dir is self-describing for `inspect` and downstream loaders.
 fn copy_sidecars(stores: &[TensorStore], output: &Path) {
     if let Some(first) = stores.first() {
-        if let Some(parent_dir) = first.path().parent() {
-            for sidecar in [
-                "config.json",
-                "tokenizer.json",
-                "tokenizer_config.json",
-                "special_tokens_map.json",
-                "generation_config.json",
-            ] {
-                let src = parent_dir.join(sidecar);
-                if src.exists() {
-                    let _ = std::fs::copy(&src, output.join(sidecar));
-                }
+        let cfg_dir = if first.path().is_dir() {
+            first.path().to_path_buf()
+        } else if let Some(parent_dir) = first.path().parent() {
+            parent_dir.to_path_buf()
+        } else {
+            return;
+        };
+        for sidecar in [
+            "config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "special_tokens_map.json",
+            "generation_config.json",
+        ] {
+            let src = cfg_dir.join(sidecar);
+            if src.exists() {
+                let _ = std::fs::copy(&src, output.join(sidecar));
             }
         }
     }
@@ -220,11 +226,11 @@ fn execute_config_merge(
     nparent: usize,
     max_memory_gb: f32,
 ) -> Result<()> {
-    // Load all models from config
+    // Load all models from config (TensorStore::open handles dirs)
     let mut stores = Vec::new();
     for entry in &config.models {
-        let (sf, _) = super::resolve_model(&entry.path);
-        let store = TensorStore::open(&sf)?;
+        let store = TensorStore::open(&entry.path)
+            .with_context(|| format!("opening model {}", entry.path.display()))?;
         stores.push(store);
     }
     

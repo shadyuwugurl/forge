@@ -53,6 +53,7 @@ impl HubClient {
     }
 
     /// Download a full model (weights + tokenizer + config) into `output_dir`.
+    /// Uses symlinks to HF cache where possible to avoid 2x disk usage.
     /// Returns the output dir.
     pub async fn download(&self, model_id: &str, output_dir: &PathBuf) -> Result<PathBuf> {
         std::fs::create_dir_all(output_dir)?;
@@ -71,7 +72,7 @@ impl HubClient {
                 Ok(cached) => {
                     let dst = output_dir.join(f);
                     if cached != dst {
-                        let _ = std::fs::copy(&cached, &dst);
+                        link_or_copy(&cached, &dst)?;
                     }
                     eprintln!("  fetched {}", f);
                 }
@@ -87,7 +88,7 @@ impl HubClient {
             Ok(cached_index) => {
                 let dst = output_dir.join("model.safetensors.index.json");
                 if cached_index != dst {
-                    let _ = std::fs::copy(&cached_index, &dst);
+                    link_or_copy(&cached_index, &dst)?;
                 }
                 eprintln!("  fetched model.safetensors.index.json");
                 let data = std::fs::read_to_string(&dst)
@@ -110,12 +111,13 @@ impl HubClient {
 
         if shards.is_empty() {
             // Single-file or unknown layout — try common weight filenames
+            // Also try model-*.safetensors naming (e.g. NeoHorse, Clownius)
             for candidate in ["model.safetensors", "pytorch_model.safetensors"] {
                 match repo.get(candidate).await {
                     Ok(cached) => {
                         let dst = output_dir.join(candidate);
                         if cached != dst {
-                            let _ = std::fs::copy(&cached, &dst);
+                            link_or_copy(&cached, &dst)?;
                         }
                         eprintln!("  fetched {}", candidate);
                         shards.push(candidate.to_string());
@@ -124,13 +126,33 @@ impl HubClient {
                     Err(e) => eprintln!("  skip {}: {}", candidate, e),
                 }
             }
+            // Fallback: sharded without index (model-00001-of-*.safetensors)
+            if shards.is_empty() {
+                eprintln!("  trying sharded pattern without index...");
+                for i in 1..=8 {
+                    for total in [4usize, 2, 8] {
+                        let name = format!("model-{:05}-of-{:05}.safetensors", i, total);
+                        if let Ok(cached) = repo.get(&name).await {
+                            let dst = output_dir.join(&name);
+                            if cached != dst {
+                                link_or_copy(&cached, &dst)?;
+                            }
+                            eprintln!("  fetched {}", name);
+                            shards.push(name);
+                        }
+                    }
+                    if !shards.is_empty() && i >= 4 {
+                        break;
+                    }
+                }
+            }
         } else {
             for shard in &shards {
                 let cached = repo.get(shard).await
                     .with_context(|| format!("downloading shard {}", shard))?;
                 let dst = output_dir.join(shard);
                 if cached != dst {
-                    std::fs::copy(&cached, &dst)?;
+                    link_or_copy(&cached, &dst)?;
                 }
                 eprintln!("  fetched {}", shard);
             }
@@ -142,4 +164,21 @@ impl HubClient {
 
         Ok(output_dir.clone())
     }
+}
+
+/// Link HF cache file to destination (symlink → hardlink → copy fallback).
+/// Saves 2x disk for 19GB models.
+fn link_or_copy(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    let _ = std::fs::remove_file(dst);
+    #[cfg(unix)]
+    {
+        if std::os::unix::fs::symlink(src, dst).is_ok() {
+            return Ok(());
+        }
+        if std::fs::hard_link(src, dst).is_ok() {
+            return Ok(());
+        }
+    }
+    std::fs::copy(src, dst)?;
+    Ok(())
 }

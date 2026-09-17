@@ -8,79 +8,149 @@ use safetensors::{SafeTensors, Dtype};
 use forge_core::{TensorMeta, DType};
 
 /// Memory-mapped tensor store for zero-copy reads.
+/// Supports single-file (`model.safetensors`) and sharded dirs
+/// (`model-00001-of-00004.safetensors` + index.json).
 /// Processes one tensor at a time — peak RAM = largest tensor only.
 pub struct TensorStore {
     path: PathBuf,
-    mmap: Mmap,
+    mmaps: Vec<Mmap>,
     index: HashMap<String, TensorInfo>,
     total_params: usize,
-    /// Byte offset where the tensor data section starts (8 + header len).
-    /// `data_offsets` in the JSON header are relative to this base.
-    data_base: usize,
+    /// Per-file byte offset where tensor data starts (8 + header len).
+    data_bases: Vec<usize>,
 }
 
 struct TensorInfo {
+    file_idx: usize,
     dtype: DType,
     shape: Vec<usize>,
     offset: usize,
     size: usize,
 }
 
+fn dtype_of(d: Dtype) -> DType {
+    match d {
+        Dtype::F32 => DType::F32,
+        Dtype::F16 => DType::F16,
+        Dtype::BF16 => DType::BF16,
+        Dtype::F64 => DType::F32,
+        Dtype::U8 => DType::UInt8,
+        Dtype::I8 => DType::Int8,
+        Dtype::U16 => DType::UInt8,
+        Dtype::I16 => DType::Int8,
+        Dtype::U32 => DType::UInt32,
+        Dtype::I32 => DType::Int8,
+        Dtype::U64 => DType::UInt32,
+        Dtype::I64 => DType::Int8,
+        _ => DType::F16,
+    }
+}
+
 impl TensorStore {
-    /// Open a safetensors file with memory-mapped access
+    /// Open a safetensors file OR a sharded model directory.
     pub fn open(path: &Path) -> Result<Self> {
+        if path.is_dir() {
+            Self::open_dir(path)
+        } else {
+            Self::open_single(path)
+        }
+    }
+
+    /// Open a single safetensors file
+    pub fn open_single(path: &Path) -> Result<Self> {
         let file = File::open(path)
             .with_context(|| format!("opening {}", path.display()))?;
         let mmap = unsafe { Mmap::map(&file) }
             .context("memory mapping file")?;
 
-        // Parse the header to build tensor index
         let (header_len, metadata) = SafeTensors::read_metadata(&mmap)
             .map_err(|e| anyhow::anyhow!("safetensors parse error: {}", e))?;
-        // data_offsets are relative to the end of the JSON header.
         let data_base = 8 + header_len;
 
         let mut index = HashMap::new();
         let mut total_params = 0;
 
         for (name, info) in metadata.tensors() {
-            let dtype = match info.dtype {
-                Dtype::F32 => DType::F32,
-                Dtype::F16 => DType::F16,
-                Dtype::BF16 => DType::BF16,
-                Dtype::F64 => DType::F32, // promote
-                Dtype::U8 => DType::UInt8,
-                Dtype::I8 => DType::Int8,
-                Dtype::U16 => DType::UInt8,
-                Dtype::I16 => DType::Int8,
-                Dtype::U32 => DType::UInt32,
-                Dtype::I32 => DType::Int8,
-                Dtype::U64 => DType::UInt32,
-                Dtype::I64 => DType::Int8,
-                _ => DType::F16,
-            };
-
             let shape: Vec<usize> = info.shape.clone();
             let num_elements: usize = shape.iter().product();
             let (start, end) = info.data_offsets;
-            let size = end - start;
-
             index.insert(name.clone(), TensorInfo {
-                dtype,
+                file_idx: 0,
+                dtype: dtype_of(info.dtype),
                 shape,
                 offset: start,
-                size,
+                size: end - start,
             });
-
             total_params += num_elements;
         }
 
         Ok(Self {
             path: path.to_path_buf(),
-            mmap,
+            mmaps: vec![mmap],
             index,
             total_params,
-            data_base,
+            data_bases: vec![data_base],
+        })
+    }
+
+    /// Open a sharded model directory (all `*.safetensors`, sorted).
+    pub fn open_dir(dir: &Path) -> Result<Self> {
+        // Prefer single-file layout when present
+        let single = dir.join("model.safetensors");
+        if single.exists() {
+            let mut s = Self::open_single(&single)?;
+            s.path = dir.to_path_buf();
+            return Ok(s);
+        }
+        let mut shards: Vec<PathBuf> = std::fs::read_dir(dir)
+            .with_context(|| format!("reading dir {}", dir.display()))?
+            .filter_map(|e| e.ok().map(|x| x.path()))
+            .filter(|p| p.extension().map(|x| x == "safetensors").unwrap_or(false))
+            .collect();
+        shards.sort();
+        if shards.is_empty() {
+            anyhow::bail!("no .safetensors files in {}", dir.display());
+        }
+
+        let mut mmaps = Vec::with_capacity(shards.len());
+        let mut data_bases = Vec::with_capacity(shards.len());
+        let mut index: HashMap<String, TensorInfo> = HashMap::new();
+        let mut total_params = 0;
+
+        for (file_idx, shard) in shards.iter().enumerate() {
+            let file = File::open(shard)
+                .with_context(|| format!("opening {}", shard.display()))?;
+            let mmap = unsafe { Mmap::map(&file) }
+                .context("memory mapping shard")?;
+            let (header_len, metadata) = SafeTensors::read_metadata(&mmap)
+                .map_err(|e| anyhow::anyhow!("safetensors parse error in {}: {}", shard.display(), e))?;
+            let data_base = 8 + header_len;
+            for (name, info) in metadata.tensors() {
+                let shape: Vec<usize> = info.shape.clone();
+                let num_elements: usize = shape.iter().product();
+                let (start, end) = info.data_offsets;
+                // First occurrence wins; shards should be disjoint
+                if !index.contains_key(name.as_str()) {
+                    total_params += num_elements;
+                }
+                index.insert(name.clone(), TensorInfo {
+                    file_idx,
+                    dtype: dtype_of(info.dtype),
+                    shape,
+                    offset: start,
+                    size: end - start,
+                });
+            }
+            mmaps.push(mmap);
+            data_bases.push(data_base);
+        }
+
+        Ok(Self {
+            path: dir.to_path_buf(),
+            mmaps,
+            index,
+            total_params,
+            data_bases,
         })
     }
 
@@ -113,24 +183,22 @@ impl TensorStore {
         let info = self.index.get(name)
             .with_context(|| format!("tensor '{}' not found", name))?;
 
-        let start = self.data_base + info.offset;
+        let start = self.data_bases[info.file_idx] + info.offset;
         let end = start + info.size;
-        Ok(&self.mmap[start..end])
+        Ok(&self.mmaps[info.file_idx][start..end])
     }
 
-    /// Get raw bytes for a tensor as a typed slice
+    /// Get tensor as f32 vector (handles F32/F16/BF16)
     pub fn tensor_f32(&self, name: &str) -> Result<Vec<f32>> {
         let info = self.index.get(name)
             .with_context(|| format!("tensor '{}' not found", name))?;
 
-        let start = self.data_base + info.offset;
+        let start = self.data_bases[info.file_idx] + info.offset;
         let end = start + info.size;
-        let bytes = &self.mmap[start..end];
+        let bytes = &self.mmaps[info.file_idx][start..end];
 
         match info.dtype {
             DType::F32 => {
-                // M5: single memcpy instead of per-element from_le_bytes.
-                // All-valid bit patterns: any 4 bytes are a valid f32.
                 #[cfg(target_endian = "little")]
                 {
                     let n = bytes.len() / 4;

@@ -7,18 +7,11 @@ pub fn run(model_path: &str) -> Result<()> {
     // Local paths win — even if they contain '/'. Only treat as HF ID when
     // the path does not exist locally and looks like `org/model` or URL.
     if candidate.exists() {
-        let (sf, _cfg) = super::resolve_model(&candidate);
-        let open_path = if sf.exists() {
-            sf
-        } else if candidate.is_dir() {
-            super::resolve_model_shard(&candidate).unwrap_or(sf)
-        } else {
-            sf
-        };
-        let store = TensorStore::open(&open_path)?;
+        // TensorStore::open handles single-file + sharded dirs directly
+        let store = TensorStore::open(&candidate)?;
 
         eprintln!("Model: {}", candidate.display());
-        eprintln!("File: {}", open_path.display());
+        eprintln!("File: {}", store.path().display());
         eprintln!("Tensors: {}", store.tensor_names().len());
         eprintln!("Parameters: {} ({:.1}B)", store.total_params(), store.total_params() as f64 / 1e9);
 
