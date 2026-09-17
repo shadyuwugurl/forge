@@ -14,6 +14,22 @@ pub enum MergeMethod {
     /// Multi-model SLERP via sequential pairwise
     #[serde(rename = "nuslerp")]
     NuSlerp,
+    /// Barycentric spherical interpolation over N models
+    #[serde(rename = "multislerp")]
+    MultiSlerp {
+        #[serde(default)]
+        weights: Vec<f32>,
+    },
+    /// Riemannian (Karcher/Fréchet) mean on the sphere
+    #[serde(rename = "karcher")]
+    Karcher {
+        #[serde(default)]
+        weights: Vec<f32>,
+        #[serde(default = "default_karcher_iter")]
+        max_iter: usize,
+        #[serde(default = "default_karcher_tol")]
+        tol: f32,
+    },
     /// Task vector arithmetic
     #[serde(rename = "task_arithmetic")]
     TaskArithmetic { lambda: f32 },
@@ -47,15 +63,70 @@ pub enum MergeMethod {
     /// Model stock geometric interpolation
     #[serde(rename = "model_stock")]
     ModelStock,
-    /// Breadcrumbs merge
+    /// Breadcrumbs merge (outlier-filtered task arithmetic)
     #[serde(rename = "breadcrumbs")]
-    Breadcrumbs,
+    Breadcrumbs {
+        #[serde(default = "default_lambda_one")]
+        lambda: f32,
+        #[serde(default = "default_breadcrumb_beta")]
+        beta: f32,
+        #[serde(default = "default_breadcrumb_gamma")]
+        gamma: f32,
+    },
+    /// Breadcrumbs + TIES sign consensus
+    #[serde(rename = "breadcrumbs_ties")]
+    BreadcrumbsTies {
+        #[serde(default = "default_lambda_one")]
+        lambda: f32,
+        #[serde(default = "default_breadcrumb_beta")]
+        beta: f32,
+        #[serde(default = "default_breadcrumb_gamma")]
+        gamma: f32,
+    },
+    /// SCE variance-weighted task arithmetic
+    #[serde(rename = "sce")]
+    Sce {
+        #[serde(default = "default_lambda_one")]
+        lambda: f32,
+    },
+    /// Arcee fusion dynamic-threshold fusion
+    #[serde(rename = "arcee_fusion")]
+    ArceeFusion {
+        #[serde(default = "default_lambda_one")]
+        lambda: f32,
+        #[serde(default = "default_arcee_thresh")]
+        threshold_std: f32,
+    },
     /// Nearswap merge
     #[serde(rename = "nearswap")]
-    Nearswap,
+    Nearswap {
+        #[serde(default = "default_nearswap_t")]
+        t: f32,
+        #[serde(default = "default_nearswap_thresh")]
+        threshold: f32,
+    },
     /// RAM merge
     #[serde(rename = "ram")]
-    Ram,
+    Ram {
+        #[serde(default = "default_ram_seed")]
+        seed: u64,
+    },
+    /// FrankenMoE burger-style MoE merge
+    #[serde(rename = "frankenmoe")]
+    FrankenMoE {
+        #[serde(default = "default_frankenmoe_bottom")]
+        bottom_layers: usize,
+        #[serde(default = "default_frankenmoe_experts")]
+        middle_experts: usize,
+        #[serde(default = "default_frankenmoe_top")]
+        top_layers: usize,
+    },
+    /// Generic fusion pipeline (multi-strategy)
+    #[serde(rename = "fusion")]
+    Fusion {
+        #[serde(default)]
+        steps: usize,
+    },
     /// ORCA outlier-aware allocation (AAAI-26)
     #[serde(rename = "orca")]
     Orca {
@@ -213,6 +284,18 @@ pub enum QuantMethod {
 }
 
 fn default_true() -> bool { true }
+fn default_lambda_one() -> f32 { 1.0 }
+fn default_breadcrumb_beta() -> f32 { 0.1 }
+fn default_breadcrumb_gamma() -> f32 { 0.1 }
+fn default_arcee_thresh() -> f32 { 1.0 }
+fn default_nearswap_t() -> f32 { 0.5 }
+fn default_nearswap_thresh() -> f32 { 0.1 }
+fn default_ram_seed() -> u64 { 42 }
+fn default_karcher_iter() -> usize { 20 }
+fn default_karcher_tol() -> f32 { 1e-5 }
+fn default_frankenmoe_bottom() -> usize { 4 }
+fn default_frankenmoe_experts() -> usize { 8 }
+fn default_frankenmoe_top() -> usize { 2 }
 fn default_orca_threshold() -> f32 { 3.0 }
 fn default_latent_dim() -> usize { 512 }
 fn default_num_experts() -> usize { 8 }

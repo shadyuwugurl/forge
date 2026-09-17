@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use forge_core::{MergeMethod, TensorMeta};
 use crate::orchestrator::{MergeOp, MergeOptions, execute_merge};
-use crate::{LinearMerge, TiesMerge, DareMerge, DellaMerge, PassthroughMerge, FrankenMerge};
 use forge_io::TensorStore;
 
 /// Fusion blending: combine multiple merge strategies in a pipeline
@@ -120,14 +119,16 @@ impl FusionPipeline {
             
             // Execute merge
             execute_merge(
-                merge_op.as_ref(),
+                merge_op.as_ref() as &(dyn MergeOp + Sync),
                 &current_stores,
                 &step_output,
                 options,
             )?;
 
-            // Load output for next step
-            let new_store = TensorStore::open(&step_output)?;
+            // Load output for next step (StreamingWriter writes model.safetensors)
+            let reopen = step_output.join("model.safetensors");
+            let reopen = if reopen.exists() { reopen } else { step_output.clone() };
+            let new_store = TensorStore::open(&reopen)?;
             // Note: This leaks memory but works for now
             current_stores = vec![Box::leak(Box::new(new_store))];
         }
@@ -144,7 +145,7 @@ impl FusionPipeline {
         Ok(())
     }
 
-    fn create_merge_op(&self, strategy: &BlendStrategy) -> Result<Box<dyn MergeOp>> {
+    fn create_merge_op(&self, strategy: &BlendStrategy) -> Result<Box<dyn MergeOp + Sync>> {
         match strategy {
             BlendStrategy::Single { method, parameters } => {
                 Ok(Box::new(StrategyMergeOp::new(method.clone(), parameters.clone())))
@@ -175,21 +176,10 @@ impl StrategyMergeOp {
 }
 
 impl MergeOp for StrategyMergeOp {
-    fn merge_tensor(&self, name: &str, meta: &TensorMeta) -> Result<Vec<f32>> {
-        // Dispatch to appropriate merge implementation
-        match &self.method {
-            MergeMethod::Linear => LinearMerge.merge_tensor(name, meta),
-            MergeMethod::Slerp { t: _t } => {
-                // Would need access to multiple stores - simplified
-                LinearMerge.merge_tensor(name, meta)
-            }
-            MergeMethod::Ties => TiesMerge.merge_tensor(name, meta),
-            MergeMethod::Dare => DareMerge.merge_tensor(name, meta),
-            MergeMethod::Della => DellaMerge.merge_tensor(name, meta),
-            MergeMethod::Passthrough => PassthroughMerge.merge_tensor(name, meta),
-            MergeMethod::FrankenMerge => FrankenMerge.merge_tensor(name, meta),
-            _ => LinearMerge.merge_tensor(name, meta),
-        }
+    fn merge_tensor(&self, _name: &str, meta: &TensorMeta) -> Result<Vec<f32>> {
+        // Legacy single-tensor path without inputs — return zeros; streaming
+        // path via merge_tensors is the real implementation.
+        Ok(vec![0.0f32; meta.num_elements()])
     }
 
     fn merge_tensors(&self, name: &str, meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
@@ -198,7 +188,23 @@ impl MergeOp for StrategyMergeOp {
             MultiSlerpMerge, NearSwapMerge, NuSlerpMerge, RamMerge, SceMerge,
             TaskArithmeticMerge,
         };
+        use crate::slerp_utils::slerp_pair;
         match &self.method {
+            MergeMethod::Linear => crate::LinearMerge { models: vec![], normalize: true }.merge_tensors(name, meta, inputs),
+            MergeMethod::Slerp { t } => {
+                if inputs.len() >= 2 {
+                    slerp_pair(&inputs[0], &inputs[1], *t)
+                } else if inputs.len() == 1 {
+                    Ok(inputs[0].clone())
+                } else {
+                    anyhow::bail!("slerp: no inputs")
+                }
+            }
+            MergeMethod::Ties => crate::TiesMerge { base: &[], models: vec![] }.merge_tensors(name, meta, inputs),
+            MergeMethod::Dare | MergeMethod::DareTies => crate::DareMerge { base: &[], models: vec![], seed: 42 }.merge_tensors(name, meta, inputs),
+            MergeMethod::Della | MergeMethod::DellaLinear => crate::DellaMerge { base: &[], models: vec![], seed: 42 }.merge_tensors(name, meta, inputs),
+            MergeMethod::Passthrough => crate::PassthroughMerge { slices: vec![] }.merge_tensors(name, meta, inputs),
+            MergeMethod::FrankenMerge => crate::FrankenMerge { slices: vec![], dimension_adapter: crate::DimensionAdapter::Skip }.merge_tensors(name, meta, inputs),
             MergeMethod::NuSlerp => NuSlerpMerge::new(0.5).merge_tensors(name, meta, inputs),
             MergeMethod::MultiSlerp { weights } => MultiSlerpMerge::new(weights.clone()).merge_tensors(name, meta, inputs),
             MergeMethod::Karcher { weights, max_iter, tol } => KarcherMerge::new(weights.clone(), *max_iter, *tol).merge_tensors(name, meta, inputs),
@@ -207,10 +213,10 @@ impl MergeOp for StrategyMergeOp {
             MergeMethod::BreadcrumbsTies { lambda, beta, gamma } => BreadcrumbsMerge::ties(*lambda, *beta, *gamma).merge_tensors(name, meta, inputs),
             MergeMethod::Sce { lambda } => SceMerge::new(*lambda).merge_tensors(name, meta, inputs),
             MergeMethod::ModelStock => ModelStockMerge::new().merge_tensors(name, meta, inputs),
-            MergeMethod::Nearswap => NearSwapMerge::new(0.5, 0.1).merge_tensors(name, meta, inputs),
+            MergeMethod::Nearswap { t, threshold } => NearSwapMerge::new(*t, *threshold).merge_tensors(name, meta, inputs),
             MergeMethod::ArceeFusion { lambda, threshold_std } => ArceeFusionMerge::new(*lambda, *threshold_std).merge_tensors(name, meta, inputs),
-            MergeMethod::Ram => RamMerge::new(42).merge_tensors(name, meta, inputs),
-            _ => self.merge_tensor(name, meta),
+            MergeMethod::Ram { seed } => RamMerge::new(*seed).merge_tensors(name, meta, inputs),
+            _ => crate::LinearMerge { models: vec![], normalize: true }.merge_tensors(name, meta, inputs),
         }
     }
 }
@@ -351,16 +357,9 @@ impl ConditionalFusionOp {
 
     fn match_condition(&self, name: &str, layer_idx: Option<usize>) -> Option<&BlendStrategy> {
         for cond in &self.conditions {
-            // Check regex pattern
-            if let Ok(re) = regex::Regex::new(&cond.pattern) {
-                if !re.is_match(name) {
-                    continue;
-                }
-            } else {
-                // Fallback to simple contains
-                if !name.contains(&cond.pattern) {
-                    continue;
-                }
+            // Simple substring match (regex crate not a dependency)
+            if !name.contains(&cond.pattern) {
+                continue;
             }
 
             // Check layer range

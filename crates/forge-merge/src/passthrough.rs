@@ -14,6 +14,14 @@ impl<'a> PassthroughMerge<'a> {
 }
 
 impl MergeOp for PassthroughMerge<'_> {
+    fn merge_tensors(&self, _name: &str, _meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        if inputs.is_empty() {
+            anyhow::bail!("passthrough: no inputs");
+        }
+        // Streaming: keep first parent's tensor (layer routing uses merge_tensor path)
+        Ok(inputs[0].clone())
+    }
+
     fn merge_tensor(&self, _name: &str, _meta: &TensorMeta) -> Result<Vec<f32>> {
         // Concatenate data from all slices
         let mut result = Vec::new();

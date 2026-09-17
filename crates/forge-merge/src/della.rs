@@ -16,6 +16,35 @@ impl<'a> DellaMerge<'a> {
 }
 
 impl MergeOp for DellaMerge<'_> {
+    fn merge_tensors(&self, _name: &str, _meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        if inputs.is_empty() {
+            anyhow::bail!("della: no inputs");
+        }
+        if inputs.len() == 1 {
+            return Ok(inputs[0].clone());
+        }
+        let base = &inputs[0];
+        let n = base.len();
+        let mut out = base.clone();
+        let total = (inputs.len() - 1) as f32;
+        for model in inputs[1..].iter() {
+            if model.len() != n {
+                continue;
+            }
+            let delta: Vec<f32> = model.iter().zip(base.iter()).map(|(m, b)| m - b).collect();
+            let mut mags: Vec<f32> = delta.iter().map(|x| x.abs()).collect();
+            mags.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let keep = ((n as f32 * 0.5).ceil() as usize).max(1);
+            let thresh = mags.get(n.saturating_sub(keep)).copied().unwrap_or(0.0);
+            for i in 0..n {
+                if delta[i].abs() >= thresh {
+                    out[i] += delta[i] / total;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn merge_tensor(&self, _name: &str, meta: &TensorMeta) -> Result<Vec<f32>> {
         let len = self.base.len();
         let mut result = self.base.to_vec();

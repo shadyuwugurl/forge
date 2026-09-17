@@ -16,6 +16,35 @@ impl<'a> DareMerge<'a> {
 }
 
 impl MergeOp for DareMerge<'_> {
+    fn merge_tensors(&self, _name: &str, meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        if inputs.is_empty() {
+            anyhow::bail!("dare: no inputs");
+        }
+        if inputs.len() == 1 {
+            return Ok(inputs[0].clone());
+        }
+        let base = &inputs[0];
+        let n = base.len();
+        let mut out = base.clone();
+        let total = (inputs.len() - 1) as f32;
+        let mut rng = self.seed.wrapping_add(meta.name.len() as u64);
+        let density = 0.5f32;
+        let scale = 1.0 / density;
+        for model in inputs[1..].iter() {
+            if model.len() != n {
+                continue;
+            }
+            for i in 0..n {
+                rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let r = (rng >> 33) as f32 / (1u32 << 31) as f32;
+                if r < density {
+                    out[i] += (model[i] - base[i]) * scale / total;
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn merge_tensor(&self, _name: &str, meta: &TensorMeta) -> Result<Vec<f32>> {
         let len = self.base.len();
         let mut result = self.base.to_vec();

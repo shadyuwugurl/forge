@@ -31,6 +31,27 @@ impl<'a> FrankenMerge<'a> {
 }
 
 impl MergeOp for FrankenMerge<'_> {
+    fn merge_tensors(&self, _name: &str, meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        if inputs.is_empty() {
+            anyhow::bail!("frankenmerge: no inputs");
+        }
+        // Streaming fallback: shape-matched average, mismatched shapes keep first.
+        // Full layer-stacking uses slices via merge_tensor.
+        let n = meta.num_elements();
+        let compat: Vec<&Vec<f32>> = inputs.iter().filter(|t| t.len() == n).collect();
+        if compat.is_empty() {
+            return Ok(inputs[0].clone());
+        }
+        let denom = compat.len() as f32;
+        let mut out = vec![0.0f32; n];
+        for t in &compat {
+            for (r, v) in out.iter_mut().zip(t.iter()) {
+                *r += *v / denom;
+            }
+        }
+        Ok(out)
+    }
+
     fn merge_tensor(&self, _name: &str, meta: &TensorMeta) -> Result<Vec<f32>> {
         let mut result = Vec::new();
 

@@ -192,11 +192,20 @@ impl MergeKitLoader {
                 let threshold_std = params.get("threshold_std").and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
                 Ok(MergeMethod::ArceeFusion { lambda, threshold_std })
             }
-            "nearswap" => Ok(MergeMethod::Nearswap),
-            "ram" => Ok(MergeMethod::Ram),
+            "nearswap" => {
+                let t = params.get("t").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+                let threshold = params.get("threshold").and_then(|v| v.as_f64()).unwrap_or(0.1) as f32;
+                Ok(MergeMethod::Nearswap { t, threshold })
+            }
+            "ram" => {
+                let seed = params.get("seed").and_then(|v| v.as_u64()).unwrap_or(42);
+                Ok(MergeMethod::Ram { seed })
+            }
             "frankenmoe" => {
-                // Custom: FrankenMoE
-                Ok(MergeMethod::FrankenMerge) // Will be handled specially
+                let bottom_layers = params.get("bottom_layers").and_then(|v| v.as_u64()).unwrap_or(4) as usize;
+                let middle_experts = params.get("middle_experts").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+                let top_layers = params.get("top_layers").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+                Ok(MergeMethod::FrankenMoE { bottom_layers, middle_experts, top_layers })
             }
             _ => anyhow::bail!("Unknown merge method: {}", method),
         }
@@ -310,13 +319,16 @@ fn merge_method_to_string(method: &MergeMethod) -> String {
         MergeMethod::BreadcrumbsTies { .. } => "breadcrumbs_ties".to_string(),
         MergeMethod::Sce { .. } => "sce".to_string(),
         MergeMethod::ArceeFusion { .. } => "arcee_fusion".to_string(),
-        MergeMethod::Nearswap => "nearswap".to_string(),
-        MergeMethod::Ram => "ram".to_string(),
+        MergeMethod::Nearswap { .. } => "nearswap".to_string(),
+        MergeMethod::Ram { .. } => "ram".to_string(),
         MergeMethod::Latent { .. } => "latent".to_string(),
         MergeMethod::Orca { .. } => "orca".to_string(),
         MergeMethod::ExpertWeaver { .. } => "expert_weaver".to_string(),
         MergeMethod::MoeDenseDistill { .. } => "moe_dense_distill".to_string(),
         MergeMethod::Hetero { .. } => "hetero".to_string(),
+        MergeMethod::Chimera { .. } => "chimera".to_string(),
+        MergeMethod::Aether { .. } => "aether".to_string(),
+        MergeMethod::Pocket { .. } => "pocket".to_string(),
     }
 }
 
@@ -385,6 +397,10 @@ fn quant_method_to_config(method: &QuantMethod) -> MergeKitQuantConfig {
                 m.insert("block".to_string(), serde_json::json!(block));
                 m
             },
+        },
+        other => MergeKitQuantConfig {
+            method: format!("{:?}", other).to_lowercase(),
+            parameters: HashMap::new(),
         },
     }
 }

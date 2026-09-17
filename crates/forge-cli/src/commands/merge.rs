@@ -4,6 +4,8 @@ use clap::ValueEnum;
 use forge_core::{MergeMethod, MergeConfig, TensorMeta, DType, MemoryGuard};
 use forge_io::{TensorStore, StreamingWriter};
 use forge_merge::{LinearMerge, LatentMerge, ExpertWeaver, MoeDenseDistill, HeteroMerge, HeteroMode, ChimeraMerge, PocketPrune, AetherRemap};
+use forge_merge::{SlerpMerge, TiesMerge, DareMerge, DellaMerge, PassthroughMerge, FrankenMerge, DimensionAdapter};
+use forge_merge::{TaskArithmeticMerge, NuSlerpMerge, MultiSlerpMerge, KarcherMerge, BreadcrumbsMerge, SceMerge, ModelStockMerge, NearSwapMerge, RamMerge, ArceeFusionMerge};
 use forge_merge::orchestrator::{execute_merge as orch_execute_merge, MergeOp, MergeOptions};
 
 pub fn run(
@@ -102,19 +104,26 @@ fn parse_merge_method(
         "linear" => MergeMethod::Linear,
         "slerp" => MergeMethod::Slerp { t: t.unwrap_or(0.5) },
         "nuslerp" => MergeMethod::NuSlerp,
-        "task_arithmetic" => MergeMethod::TaskArithmetic { lambda: t.unwrap_or(1.0) },
+        "multislerp" | "multi_slerp" | "multi-slerp" => MergeMethod::MultiSlerp { weights: vec![] },
+        "karcher" | "karcher_mean" => MergeMethod::Karcher { weights: vec![], max_iter: 20, tol: 1e-5 },
+        "task_arithmetic" | "task-arithmetic" => MergeMethod::TaskArithmetic { lambda: t.unwrap_or(1.0) },
         "ties" => MergeMethod::Ties,
         "dare" => MergeMethod::Dare,
-        "dare_ties" => MergeMethod::DareTies,
-        "della_linear" => MergeMethod::DellaLinear,
+        "dare_ties" | "dare-ties" => MergeMethod::DareTies,
+        "della_linear" | "della-linear" => MergeMethod::DellaLinear,
         "della" => MergeMethod::Della,
         "passthrough" => MergeMethod::Passthrough,
         "darwin" => MergeMethod::Darwin { generations: 30, population: 40 },
         "frankenmerge" => MergeMethod::FrankenMerge,
-        "model_stock" => MergeMethod::ModelStock,
-        "breadcrumbs" => MergeMethod::Breadcrumbs,
-        "nearswap" => MergeMethod::Nearswap,
-        "ram" => MergeMethod::Ram,
+        "frankenmoe" => MergeMethod::FrankenMoE { bottom_layers: 4, middle_experts: 8, top_layers: 2 },
+        "fusion" => MergeMethod::Fusion { steps: 0 },
+        "model_stock" | "model-stock" => MergeMethod::ModelStock,
+        "breadcrumbs" => MergeMethod::Breadcrumbs { lambda: t.unwrap_or(1.0), beta: 0.1, gamma: 0.1 },
+        "breadcrumbs_ties" | "breadcrumbs-ties" => MergeMethod::BreadcrumbsTies { lambda: t.unwrap_or(1.0), beta: 0.1, gamma: 0.1 },
+        "sce" => MergeMethod::Sce { lambda: t.unwrap_or(1.0) },
+        "arcee_fusion" | "arcee-fusion" => MergeMethod::ArceeFusion { lambda: t.unwrap_or(1.0), threshold_std: 1.0 },
+        "nearswap" => MergeMethod::Nearswap { t: 0.5, threshold: 0.1 },
+        "ram" => MergeMethod::Ram { seed: 42 },
         "latent" | "ls_merge" => MergeMethod::Latent {
             vae_path: vae.map(|p| p.to_path_buf()),
             latent_dim,
@@ -253,29 +262,45 @@ fn execute_config_merge(
 fn create_merge_op(method: &MergeMethod, n_models: usize) -> Result<Box<dyn MergeOp + Sync>> {
     // Use a helper to coerce each arm to Box<dyn MergeOp>
     fn linear_merge() -> Box<dyn MergeOp + Sync> {
-        Box::new(LinearMerge { 
-            models: vec![], 
-            normalize: true 
+        Box::new(LinearMerge {
+            models: vec![],
+            normalize: true
         })
     }
-    
+
     Ok(match method {
         MergeMethod::Linear => linear_merge(),
-        MergeMethod::Slerp { t } => linear_merge(),
-        MergeMethod::NuSlerp => linear_merge(),
-        MergeMethod::TaskArithmetic { lambda } => linear_merge(),
-        MergeMethod::Ties => linear_merge(),
-        MergeMethod::Dare => linear_merge(),
-        MergeMethod::DareTies => linear_merge(),
-        MergeMethod::DellaLinear => linear_merge(),
-        MergeMethod::Della => linear_merge(),
-        MergeMethod::Passthrough => Box::new(LinearMerge { models: vec![], normalize: false }),
-        MergeMethod::Darwin { generations, population } => linear_merge(),
-        MergeMethod::FrankenMerge => linear_merge(),
-        MergeMethod::ModelStock => linear_merge(),
-        MergeMethod::Breadcrumbs => linear_merge(),
-        MergeMethod::Nearswap => linear_merge(),
-        MergeMethod::Ram => linear_merge(),
+        MergeMethod::Slerp { t } => Box::new(SlerpMerge { model_a: &[], model_b: &[], t: *t }),
+        MergeMethod::NuSlerp => Box::new(NuSlerpMerge::new(0.5)),
+        MergeMethod::MultiSlerp { weights } => Box::new(MultiSlerpMerge::new(weights.clone())),
+        MergeMethod::Karcher { weights, max_iter, tol } => Box::new(KarcherMerge::new(weights.clone(), *max_iter, *tol)),
+        MergeMethod::TaskArithmetic { lambda } => Box::new(TaskArithmeticMerge::new(*lambda)),
+        MergeMethod::Ties => Box::new(TiesMerge { base: &[], models: vec![] }),
+        MergeMethod::Dare => Box::new(DareMerge { base: &[], models: vec![], seed: 42 }),
+        MergeMethod::DareTies => Box::new(DareMerge { base: &[], models: vec![], seed: 42 }),
+        MergeMethod::DellaLinear => Box::new(DellaMerge { base: &[], models: vec![], seed: 42 }),
+        MergeMethod::Della => Box::new(DellaMerge { base: &[], models: vec![], seed: 42 }),
+        MergeMethod::Passthrough => Box::new(PassthroughMerge { slices: vec![] }),
+        MergeMethod::Darwin { generations, population } => {
+            eprintln!("warning: darwin evolutionary merge not yet streaming; falling back to linear (generations={} population={})", generations, population);
+            linear_merge()
+        }
+        MergeMethod::FrankenMerge => Box::new(FrankenMerge { slices: vec![], dimension_adapter: DimensionAdapter::Skip }),
+        MergeMethod::FrankenMoE { bottom_layers, middle_experts, top_layers } => {
+            eprintln!("warning: frankenmoe (bottom={} experts={} top={}) needs layer routing; falling back to linear average", bottom_layers, middle_experts, top_layers);
+            linear_merge()
+        }
+        MergeMethod::Fusion { steps } => {
+            eprintln!("warning: fusion pipeline ({} steps) not yet wired in CLI; falling back to linear", steps);
+            linear_merge()
+        }
+        MergeMethod::ModelStock => Box::new(ModelStockMerge::new()),
+        MergeMethod::Breadcrumbs { lambda, beta, gamma } => Box::new(BreadcrumbsMerge::new(*lambda, *beta, *gamma)),
+        MergeMethod::BreadcrumbsTies { lambda, beta, gamma } => Box::new(BreadcrumbsMerge::ties(*lambda, *beta, *gamma)),
+        MergeMethod::Sce { lambda } => Box::new(SceMerge::new(*lambda)),
+        MergeMethod::ArceeFusion { lambda, threshold_std } => Box::new(ArceeFusionMerge::new(*lambda, *threshold_std)),
+        MergeMethod::Nearswap { t, threshold } => Box::new(NearSwapMerge::new(*t, *threshold)),
+        MergeMethod::Ram { seed } => Box::new(RamMerge::new(*seed)),
         MergeMethod::Latent { vae_path, latent_dim } => {
             Box::new(LatentMerge::new(vae_path.clone(), *latent_dim))
         }

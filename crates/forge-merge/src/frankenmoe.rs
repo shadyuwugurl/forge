@@ -273,11 +273,13 @@ impl<'a> FrankenMoE<'a> {
             RouterMergeStrategy::Dare { density } => {
                 let base = &router_data[0];
                 let mut result = base.clone();
-                use rand::Rng;
-                let mut rng = rand::thread_rng();
+                // Deterministic LCG (no rand dep) for dropout
+                let mut state: u64 = 0x9E3779B97F4A7C15;
                 for data in &router_data[1..] {
                     for (i, &val) in data.iter().enumerate() {
-                        if rng.gen::<f32>() < *density {
+                        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                        let r = (state >> 33) as f32 / (1u32 << 31) as f32;
+                        if r < *density {
                             result[i] += val / *density;
                         }
                     }
@@ -456,11 +458,12 @@ impl<'a> FrankenMoE<'a> {
             let end = start + expert_size;
             let mut new_expert = expert_data[0][start..end].to_vec();
             
-            // Add small noise
-            use rand::Rng;
-            let mut rng = rand::thread_rng();
+            // Add small noise (deterministic LCG, no rand dep)
+            let mut state: u64 = 0x123456789ABCDEF ^ (new_expert.len() as u64).wrapping_mul(0x9E3779B9);
             for val in &mut new_expert {
-                *val += rng.gen::<f32>() * 0.01 - 0.005;
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let r = (state >> 33) as f32 / (1u32 << 31) as f32;
+                *val += r * 0.01 - 0.005;
             }
             result.extend_from_slice(&new_expert);
         }
@@ -630,7 +633,7 @@ fn slerp_vectors(a: &[f32], b: &[f32], t: f32) -> Result<Vec<f32>> {
 
 impl TensorStoreLike for forge_io::TensorStore {
     fn tensor_names(&self) -> Vec<String> {
-        self.tensor_names()
+        self.tensor_names().into_iter().map(|s| s.to_string()).collect()
     }
     fn tensor_meta(&self, name: &str) -> Result<TensorMeta> {
         self.tensor_meta(name).context("tensor_meta failed")
@@ -639,7 +642,7 @@ impl TensorStoreLike for forge_io::TensorStore {
         self.tensor_f32(name).context("tensor_f32 failed")
     }
     fn tensor_bytes(&self, name: &str) -> Result<Vec<u8>> {
-        self.tensor_bytes(name).context("tensor_bytes failed")
+        Ok(self.tensor_bytes(name).context("tensor_bytes failed")?.to_vec())
     }
     fn total_params(&self) -> usize {
         self.total_params()
@@ -648,7 +651,7 @@ impl TensorStoreLike for forge_io::TensorStore {
 
 impl<'a> TensorStoreLike for &'a forge_io::TensorStore {
     fn tensor_names(&self) -> Vec<String> {
-        (*self).tensor_names()
+        (*self).tensor_names().into_iter().map(|s| s.to_string()).collect()
     }
     fn tensor_meta(&self, name: &str) -> Result<TensorMeta> {
         (*self).tensor_meta(name).context("tensor_meta failed")
@@ -657,7 +660,7 @@ impl<'a> TensorStoreLike for &'a forge_io::TensorStore {
         (*self).tensor_f32(name).context("tensor_f32 failed")
     }
     fn tensor_bytes(&self, name: &str) -> Result<Vec<u8>> {
-        (*self).tensor_bytes(name).context("tensor_bytes failed")
+        Ok((*self).tensor_bytes(name).context("tensor_bytes failed")?.to_vec())
     }
     fn total_params(&self) -> usize {
         (*self).total_params()

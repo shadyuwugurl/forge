@@ -16,6 +16,16 @@ impl<'a> SlerpMerge<'a> {
 }
 
 impl MergeOp for SlerpMerge<'_> {
+    fn merge_tensors(&self, _name: &str, _meta: &TensorMeta, inputs: &[Vec<f32>]) -> Result<Vec<f32>> {
+        if inputs.len() >= 2 {
+            crate::slerp_utils::slerp_pair(&inputs[0], &inputs[1], self.t)
+        } else if inputs.len() == 1 {
+            Ok(inputs[0].clone())
+        } else {
+            anyhow::bail!("slerp: no inputs")
+        }
+    }
+
     fn merge_tensor(&self, _name: &str, _meta: &TensorMeta) -> Result<Vec<f32>> {
         let len = self.model_a.len();
         let mut result = vec![0.0f32; len];
