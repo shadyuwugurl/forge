@@ -43,8 +43,10 @@ impl JangQuantizer {
         let needs_bf16 = total_experts >= 512;
         let num_experts_est = estimate_num_experts(store);
 
-        // Copy tokenizer/config files if they sit next to the safetensors (best-effort)
-        copy_sidecars(store.path().parent().unwrap_or(Path::new(".")), output_dir);
+        // Copy tokenizer/config files if they sit next to the safetensors (best-effort).
+        // NOTE: dir-backed stores already point at the config dir; only take
+        // parent for single-file stores.
+        copy_sidecars(config_dir_of(store.path()), output_dir);
 
         let mut writer = StreamingWriter::new(output_dir, 5 * 1024 * 1024 * 1024)?;
         let mut total_bytes: u64 = 0;
@@ -184,6 +186,10 @@ fn target_bits_for_profile(p: &str) -> f32 {
     }
 }
 
+fn config_dir_of(p: &Path) -> &Path {
+    if p.is_dir() { p } else { p.parent().unwrap_or(Path::new(".")) }
+}
+
 fn copy_sidecars(src_dir: &Path, dst: &Path) {
     for fname in ["config.json","tokenizer.json","tokenizer_config.json","special_tokens_map.json","generation_config.json"] {
         let src = src_dir.join(fname);
@@ -196,7 +202,7 @@ fn copy_sidecars(src_dir: &Path, dst: &Path) {
 }
 
 fn emit_hf_config(store: &TensorStore, out: &Path, bit_widths: &[u8], needs_bf16: bool) -> Result<()> {
-    let src_cfg = store.path().parent().unwrap_or(Path::new(".")).join("config.json");
+    let src_cfg = config_dir_of(store.path()).join("config.json");
     let mut cfg: serde_json::Value = if src_cfg.exists() {
         serde_json::from_str(&std::fs::read_to_string(&src_cfg)?)?
     } else {

@@ -84,8 +84,8 @@ impl LoraExtractor {
             let store = if path.is_dir() {
                 match TensorStore::open(&path) { Ok(s) => s, Err(_) => continue }
             } else if path.extension().map(|e| e=="safetensors").unwrap_or(false) {
-                // Single file model — wrap in a temp dir view not supported, skip
-                continue
+                // Single-file adapter/finetune: open directly (TensorStore handles files)
+                match TensorStore::open(&path) { Ok(s) => s, Err(_) => continue }
             } else { continue };
             let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             let adapter = Self::extract(base, &store, rank)?;

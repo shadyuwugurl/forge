@@ -70,12 +70,15 @@ impl Dynamic3Quantizer {
 }
 
 fn detect_model_type(store: &TensorStore) -> String {
-    // Read config.json sidecar if present
-    if let Some(parent) = store.path().parent() {
-        if let Ok(s) = std::fs::read_to_string(parent.join("config.json")) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
-                if let Some(t) = v.get("model_type").and_then(|x| x.as_str()) { return t.to_string(); }
-            }
+    // Read config.json sidecar if present (dir-backed stores already point at it)
+    let cfg_dir: std::path::PathBuf = if store.path().is_dir() {
+        store.path().to_path_buf()
+    } else {
+        store.path().parent().map(|p| p.to_path_buf()).unwrap_or_else(|| ".".into())
+    };
+    if let Ok(s) = std::fs::read_to_string(cfg_dir.join("config.json")) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(t) = v.get("model_type").and_then(|x| x.as_str()) { return t.to_string(); }
         }
     }
     // Heuristic from tensor names
