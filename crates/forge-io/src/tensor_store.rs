@@ -105,7 +105,12 @@ impl TensorStore {
         let mut shards: Vec<PathBuf> = std::fs::read_dir(dir)
             .with_context(|| format!("reading dir {}", dir.display()))?
             .filter_map(|e| e.ok().map(|x| x.path()))
-            .filter(|p| p.extension().map(|x| x == "safetensors").unwrap_or(false))
+            .filter(|p| {
+                // NOTE: must be a file — stray dirs like `.parts-*.safetensors`
+                // (parallel-download scratch) also end in .safetensors and
+                // mmap(directory) fails with EINVAL.
+                p.is_file() && p.extension().map(|x| x == "safetensors").unwrap_or(false)
+            })
             .collect();
         shards.sort();
         if shards.is_empty() {

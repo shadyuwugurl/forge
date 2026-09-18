@@ -46,7 +46,8 @@ pub fn resolve_model_shard(dir: &std::path::Path) -> Option<std::path::PathBuf> 
     let mut shards: Vec<std::path::PathBuf> = entries
         .filter_map(|e| e.ok().map(|x| x.path()))
         .filter(|p| {
-            p.extension().map(|x| x == "safetensors").unwrap_or(false)
+            p.is_file()
+                && p.extension().map(|x| x == "safetensors").unwrap_or(false)
                 && p.file_name()
                     .and_then(|n| n.to_str())
                     .map(|n| n.starts_with("model-") || n.starts_with("pytorch_model-"))
@@ -69,7 +70,7 @@ pub fn list_model_shards(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut shards: Vec<std::path::PathBuf> = entries
         .filter_map(|e| e.ok().map(|x| x.path()))
         .filter(|p| {
-            p.extension().map(|x| x == "safetensors").unwrap_or(false)
+            p.is_file() && p.extension().map(|x| x == "safetensors").unwrap_or(false)
         })
         .collect();
     shards.sort();
