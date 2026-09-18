@@ -1,5 +1,5 @@
 use std::path::Path;
-use anyhow::Result;
+use anyhow::{Result, Context};
 use forge_io::TensorStore;
 use forge_quant::{JangQuantizer, Dynamic3Quantizer, ApexQuantizer, MixedPrecisionQuantizer, KvCacheOrganizer, GgufWriter, GGUFQuantType};
 use forge_quant::mixed::MixedStrategy;
@@ -103,8 +103,10 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
         return Ok(());
     }
 
-    let (sf, _) = super::resolve_model(std::path::Path::new(model));
-    let store = TensorStore::open(&sf)?;
+    let model_path = std::path::Path::new(model);
+    // TensorStore::open handles single-file + sharded dirs (merged 9B outputs are sharded)
+    let store = TensorStore::open(model_path)
+        .with_context(|| format!("opening model {}", model))?;
     std::fs::create_dir_all(output)?;
     eprintln!("Quantizing {} with method '{}'", model, method);
     match method {
@@ -132,10 +134,17 @@ pub fn run(model: &str, method: &str, profile: Option<&str>, output: &Path, dens
         }
         "gguf" => {
             let qtype = profile.and_then(|p| GGUFQuantType::from_str(p)).unwrap_or(GGUFQuantType::Q4_K_M);
-            let mut writer = GgufWriter::create(output)?;
+            // GgufWriter takes a FILE path; accept a dir and pick a filename.
+            let file = if output.extension().map(|x| x == "gguf").unwrap_or(false) {
+                output.to_path_buf()
+            } else {
+                output.join(format!("model-{}.gguf", qtype.name()))
+            };
+            let mut writer = GgufWriter::create(&file)?;
             writer.set_metadata("general.architecture", serde_json::Value::String("generic".into()));
             writer.set_metadata("general.name", serde_json::Value::String("forge-quantized".into()));
             writer.write_quantized(&store, qtype)?;
+            eprintln!("GGUF written to {}", file.display());
         }
         "bsqat" => {
             let bits: u8 = profile.and_then(|p| p.parse().ok()).unwrap_or(4);

@@ -182,11 +182,21 @@ impl GgufWriter {
     }
 }
 
-/// Estimate GGUF tensor size for given quantization
+/// Exact GGUF tensor data size for given element count + type.
+/// Q8_0 pads the trailing partial block with zeros (34 bytes per 32-elem block).
+fn exact_gguf_size(elements: u64, qtype: GGUFQuantType) -> u64 {
+    match qtype {
+        GGUFQuantType::Q8_0 => elements.div_ceil(32) * 34,
+        GGUFQuantType::F16 | GGUFQuantType::BF16 => elements * 2,
+        GGUFQuantType::F32 => elements * 4,
+        _ => (elements as f64 * qtype.bits_per_weight() as f64 / 8.0).ceil() as u64,
+    }
+}
+
+/// Estimate GGUF tensor size for given quantization (exact for Q8_0/F16/BF16/F32).
 fn estimate_gguf_size(meta: &forge_core::TensorMeta, qtype: GGUFQuantType) -> u64 {
     let elements: u64 = meta.shape.iter().map(|&x| x as u64).product();
-    let bpw = qtype.bits_per_weight() as f64;
-    (elements as f64 * bpw / 8.0).ceil() as u64
+    exact_gguf_size(elements, qtype)
 }
 
 fn is_passthrough_tensor(name: &str) -> bool {
@@ -260,15 +270,60 @@ fn write_tensor_info<W: Write>(w: &mut W, tensor: &GgufTensorInfo) -> Result<()>
 }
 
 fn write_tensor_data<W: Write>(w: &mut W, tensor: &GgufTensorInfo, store: &TensorStore) -> Result<()> {
-    // In a real implementation, this would quantize the tensor data
-    // For now, write placeholder data
-    let meta = store.tensor_meta(&tensor.name)?;
-    let data = store.tensor_bytes(&tensor.name)?;
-    
-    // Write raw data for now (real implementation would quantize)
-    w.write_all(data)?;
-    
+    let data = store.tensor_f32(&tensor.name)?;
+    match tensor.quant_type {
+        GGUFQuantType::Q8_0 => w.write_all(&quantize_q8_0(&data))?,
+        GGUFQuantType::F16 => {
+            for &v in &data {
+                w.write_all(&half::f16::from_f32(v).to_bits().to_le_bytes())?;
+            }
+        }
+        GGUFQuantType::BF16 => {
+            for &v in &data {
+                w.write_all(&half::bf16::from_f32(v).to_bits().to_le_bytes())?;
+            }
+        }
+        GGUFQuantType::F32 => {
+            for &v in &data {
+                w.write_all(&v.to_le_bytes())?;
+            }
+        }
+        q => anyhow::bail!(
+            "GGUF {:?} block quantization not implemented (supported: Q8_0, F16, BF16, F32)",
+            q
+        ),
+    }
     Ok(())
+}
+
+/// Q8_0 quantization: per-32-element blocks, fp16 scale + 32×int8.
+/// Matches ggml `block_q8_0` layout. Trailing partial block zero-padded.
+pub fn quantize_q8_0(data: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len().div_ceil(32) * 34);
+    for block in data.chunks(32) {
+        let amax = block.iter().map(|x| x.abs()).fold(0.0f32, f32::max);
+        let scale = if amax == 0.0 { 0.0 } else { amax / 127.0 };
+        let inv = if scale == 0.0 { 0.0 } else { 1.0 / scale };
+        out.extend_from_slice(&half::f16::from_f32(scale).to_bits().to_le_bytes());
+        for i in 0..32 {
+            let v = if i < block.len() { block[i] } else { 0.0 };
+            out.push((v * inv).round().clamp(-127.0, 127.0) as i8 as u8);
+        }
+    }
+    out
+}
+
+/// Dequantize Q8_0 blocks (for round-trip tests).
+pub fn dequantize_q8_0(data: &[u8], elements: usize) -> Vec<f32> {
+    let mut out = Vec::with_capacity(elements);
+    for block in data.chunks_exact(34) {
+        let scale = half::f16::from_bits(u16::from_le_bytes([block[0], block[1]])).to_f32();
+        for &q in &block[2..34] {
+            out.push((q as i8 as f32) * scale);
+        }
+    }
+    out.truncate(elements);
+    out
 }
 
 /// GGUF reader
@@ -290,5 +345,30 @@ mod tests {
         assert_eq!(GGUFQuantType::Q8_0.bits_per_weight(), 8.0);
         assert_eq!(GGUFQuantType::Q4_K_M.to_gguf_id(), 11);
         assert_eq!(GGUFQuantType::Q8_0.to_gguf_id(), 7);
+    }
+
+    #[test]
+    fn test_q8_0_roundtrip_error_bound() {
+        // Error per element must be <= half-ULP of scale + fp16 scale rounding.
+        let data: Vec<f32> = (0..100).map(|i| ((i as f32 * 0.37).sin()) * 3.0).collect();
+        let q = quantize_q8_0(&data);
+        assert_eq!(q.len(), exact_gguf_size(100, GGUFQuantType::Q8_0) as usize);
+        let back = dequantize_q8_0(&q, 100);
+        assert_eq!(back.len(), 100);
+        let amax: f32 = data.iter().map(|x| x.abs()).fold(0.0, f32::max);
+        for (a, b) in data.iter().zip(back.iter()) {
+            assert!((a - b).abs() <= amax / 127.0 + 1e-3, "{} vs {}", a, b);
+        }
+    }
+
+    #[test]
+    fn test_q8_0_zeros_and_size() {
+        let q = quantize_q8_0(&vec![0.0; 32]);
+        assert_eq!(q.len(), 34);
+        assert_eq!(&q[0..2], &[0, 0]); // zero scale
+        assert!(q[2..].iter().all(|&b| b == 0));
+        assert_eq!(exact_gguf_size(1, GGUFQuantType::Q8_0), 34);
+        assert_eq!(exact_gguf_size(32, GGUFQuantType::Q8_0), 34);
+        assert_eq!(exact_gguf_size(33, GGUFQuantType::Q8_0), 68);
     }
 }
